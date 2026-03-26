@@ -3,6 +3,7 @@ import { defineJsonSecret } from 'firebase-functions/params';
 export const paystackConfigSecret = defineJsonSecret('PAYSTACK_CONFIG');
 export const appConfigSecret = defineJsonSecret('APP_CONFIG');
 export const geminiConfigSecret = defineJsonSecret('GEMINI_CONFIG');
+export const resendConfigSecret = defineJsonSecret('RESEND_CONFIG');
 
 export const getPaystackConfig = () => {
   const config = paystackConfigSecret.value() ?? {};
@@ -19,6 +20,18 @@ export const getAppConfig = () => {
 
   return {
     firestoreDatabaseId: config.firestoreDatabaseId?.trim() || '(default)',
+  };
+};
+
+
+export const getResendConfig = () => {
+  const config = resendConfigSecret.value() ?? {};
+
+  return {
+    resendApiKey: config.apiKey?.trim(),
+    resendFromEmail: config.fromEmail?.trim(),
+    resendReplyToEmail: config.replyTo?.trim() || null,
+    resendAppUrl: config.appUrl?.trim() || null,
   };
 };
 

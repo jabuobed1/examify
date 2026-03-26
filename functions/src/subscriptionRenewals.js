@@ -1,14 +1,15 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions';
 import { getDb } from './admin.js';
-import { paystackConfigSecret, appConfigSecret } from './config.js';
+import { paystackConfigSecret, appConfigSecret, resendConfigSecret } from './config.js';
 import { chargeAuthorizationForSubscription } from './paystack.js';
+import { sendAutoBillingFailedEmail } from './email/events.js';
 
 export const processSubscriptionRenewals = onSchedule(
   {
     schedule: 'every day 01:00',
     timeZone: 'Africa/Johannesburg',
-    secrets: [paystackConfigSecret, appConfigSecret],
+    secrets: [paystackConfigSecret, appConfigSecret, resendConfigSecret],
   },
   async () => {
     const db = getDb();
@@ -40,12 +41,26 @@ export const processSubscriptionRenewals = onSchedule(
             },
             { merge: true }
           );
+
+          try {
+            await sendAutoBillingFailedEmail({
+              studentId,
+              reference: subscription.latestReference ?? null,
+              reason: 'missing_authorization',
+            });
+          } catch (emailError) {
+            logger.error('Failed to send missing authorization auto billing email', {
+              studentId,
+              error: emailError?.message ?? String(emailError),
+            });
+          }
+
           continue;
         }
 
         const auth = authDoc.data();
 
-        await chargeAuthorizationForSubscription({
+        const renewalResult = await chargeAuthorizationForSubscription({
           studentId,
           email: auth.email,
           amount: subscription.amount,
@@ -56,7 +71,14 @@ export const processSubscriptionRenewals = onSchedule(
           },
         });
 
-        logger.info('Subscription renewed successfully', { studentId });
+        if (!renewalResult.succeeded) {
+          logger.warn('Subscription renewal completed with non-success charge status', {
+            studentId,
+            chargeStatus: renewalResult.charge?.status ?? 'unknown',
+          });
+        } else {
+          logger.info('Subscription renewed successfully', { studentId });
+        }
       } catch (error) {
         logger.error('Subscription renewal failed', {
           studentId,
@@ -79,6 +101,19 @@ export const processSubscriptionRenewals = onSchedule(
           },
           { merge: true }
         );
+
+        try {
+          await sendAutoBillingFailedEmail({
+            studentId,
+            reference: subscription.latestReference ?? null,
+            reason: 'charge_failed_exception',
+          });
+        } catch (emailError) {
+          logger.error('Failed to send failed auto billing email', {
+            studentId,
+            error: emailError?.message ?? String(emailError),
+          });
+        }
       }
     }
   }

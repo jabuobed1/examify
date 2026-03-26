@@ -4,8 +4,13 @@ import { getDb, admin } from './admin.js';
 import {
   paystackConfigSecret,
   appConfigSecret,
+  resendConfigSecret,
   getPaystackConfig,
 } from './config.js';
+import {
+  sendAutoBillingFailedEmail,
+  sendPaymentSuccessEmail,
+} from './email/events.js';
 
 const sessionPricing = {
   online: 220,
@@ -56,7 +61,7 @@ const paystackRequest = async ({ path, method = 'POST', payload }) => {
 };
 
 const callableOptions = {
-  secrets: [paystackConfigSecret, appConfigSecret],
+  secrets: [paystackConfigSecret, appConfigSecret, resendConfigSecret],
 };
 
 export const initializePaystackTransaction = onCall(callableOptions, async (request) => {
@@ -231,6 +236,27 @@ export const verifyPaystackTransaction = onCall(callableOptions, async (request)
     }
   }
 
+
+  if (transaction.status === 'success' && targetStudents.length > 0) {
+    for (const sId of targetStudents) {
+      try {
+        await sendPaymentSuccessEmail({
+          studentId: sId,
+          reference,
+          amount: transaction.amount / 100,
+          currency: transaction.currency,
+          recurring: false,
+        });
+      } catch (emailError) {
+        logger.error('Failed to send payment success email after verification', {
+          studentId: sId,
+          reference,
+          error: emailError?.message ?? String(emailError),
+        });
+      }
+    }
+  }
+
   if (authorization?.authorization_code && targetStudents.length > 0) {
     for (const sId of targetStudents) {
       await db.collection('subscriptionAuthorizations').doc(sId).set(
@@ -332,6 +358,38 @@ export const chargeAuthorizationForSubscription = async ({
     },
     { merge: true }
   );
+
+  if (succeeded) {
+    try {
+      await sendPaymentSuccessEmail({
+        studentId,
+        reference: charge.reference,
+        amount,
+        currency: 'ZAR',
+        recurring: true,
+      });
+    } catch (emailError) {
+      logger.error('Failed to send recurring payment success email', {
+        studentId,
+        reference: charge.reference,
+        error: emailError?.message ?? String(emailError),
+      });
+    }
+  } else {
+    try {
+      await sendAutoBillingFailedEmail({
+        studentId,
+        reference: charge.reference,
+        reason: 'recurring_charge_status_not_success',
+      });
+    } catch (emailError) {
+      logger.error('Failed to send recurring billing failed email', {
+        studentId,
+        reference: charge.reference,
+        error: emailError?.message ?? String(emailError),
+      });
+    }
+  }
 
   return { charge, succeeded, nextRenewalDate };
 };
