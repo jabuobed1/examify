@@ -2,22 +2,28 @@ import { CalendarDays, Lock, FileText } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { SubmissionUpload } from './SubmissionUpload';
 import { uploadSubmissionImage, uploadPeerReviewImage } from '../../services/storageService';
-import { canSubmitPeerReview } from '../../utils/exerciseRules';
 import { getQuestionPapersByIds } from '../../services/firestoreService';
 import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { MarkingCanvas as ImageEditor } from '../canvas/pictureEditorCanvas';
 
-export const ExerciseCard = ({ exercise, availability, paymentLocked, studentId, dashboard }) => {
+export const ExerciseCard = ({ exercise, availability, paymentLocked, studentId, onSubmissionSaved }) => {
   const [openingPapers, setOpeningPapers] = useState(false);
   const [unreviewedExercises, setUnreviewedExercises] = useState([]);
   const [reviewingItem, setReviewingItem] = useState(null);
+  const [localExercise, setLocalExercise] = useState(exercise);
+  const [reviewStatus, setReviewStatus] = useState('');
+  const [isSavingReview, setIsSavingReview] = useState(false);
+
+  useEffect(() => {
+    setLocalExercise(exercise);
+  }, [exercise]);
   
   const handleOpenPapers = async () => {
-    if (!exercise?.paperIds?.length) return;
+    if (!localExercise?.paperIds?.length) return;
     setOpeningPapers(true);
     try {
-      const papers = await getQuestionPapersByIds(exercise.paperIds);
+      const papers = await getQuestionPapersByIds(localExercise.paperIds);
       papers.forEach((paper) => {
         if (paper.paperUrl) {
           window.open(paper.paperUrl, '_blank');
@@ -32,7 +38,8 @@ export const ExerciseCard = ({ exercise, availability, paymentLocked, studentId,
 
   const handleSaveReview = async (file) => {
     if (!reviewingItem) return;
-
+    setIsSavingReview(true);
+    setReviewStatus('');
     try {
       // Rename the file
       const originalName = reviewingItem.submittedFileName || 'submission.png';
@@ -53,13 +60,17 @@ export const ExerciseCard = ({ exercise, availability, paymentLocked, studentId,
       });
 
       setReviewingItem(null); // Close editor
+      setReviewStatus('Peer review submitted successfully.');
     } catch (error) {
       console.error('Failed to save review:', error);
+      setReviewStatus('Peer review failed. Please try again.');
+    } finally {
+      setIsSavingReview(false);
     }
   };
 
   useEffect(() => {
-    if (!exercise.submittedImageUrl) {
+    if (!localExercise?.submittedImageUrl) {
       setUnreviewedExercises([]);
       return;
     }
@@ -85,22 +96,32 @@ export const ExerciseCard = ({ exercise, availability, paymentLocked, studentId,
     });
 
     return unsubscribe;
-  }, [exercise.submittedImageUrl, studentId]);
+  }, [localExercise?.submittedImageUrl, studentId]);
+
+  const handleSubmissionSuccess = (result) => {
+    setLocalExercise((current) => ({
+      ...(current ?? {}),
+      submittedImageUrl: result?.submittedImageUrl ?? current?.submittedImageUrl ?? '',
+      submittedFileName: result?.submittedFileName ?? current?.submittedFileName ?? '',
+      submitted: 'Yes',
+    }));
+    onSubmissionSaved?.(result);
+  };
 
   return (
     <div className="panel p-6 w-full">
       <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
         <span className="inline-flex items-center gap-2 rounded-full bg-brand-50 px-3 py-1 font-semibold text-brand-700">
           <CalendarDays className="h-4 w-4" />
-          {exercise.assignmentDate}
+          {localExercise.assignmentDate}
         </span>
         <span className="rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-600">{availability.label}</span>
       </div>
-      <h3 className="mt-4 text-2xl font-bold text-slate-950">{exercise.title}</h3>
-      <p className="mt-2 text-sm font-semibold text-accent">{exercise.topic}</p>
-      <p className="mt-3 text-sm text-slate-500">{exercise.sourceLabel}</p>
-      <p className="mt-4 text-sm leading-7 text-slate-600">{exercise.instruction}</p>
-      {exercise?.paperIds?.length > 0 && (
+      <h3 className="mt-4 text-2xl font-bold text-slate-950">{localExercise.title}</h3>
+      <p className="mt-2 text-sm font-semibold text-accent">{localExercise.topic}</p>
+      <p className="mt-3 text-sm text-slate-500">{localExercise.sourceLabel}</p>
+      <p className="mt-4 text-sm leading-7 text-slate-600">{localExercise.instruction}</p>
+      {localExercise?.paperIds?.length > 0 && (
         <div className="mt-4">
           <button
             type="button"
@@ -115,15 +136,15 @@ export const ExerciseCard = ({ exercise, availability, paymentLocked, studentId,
       )}
       <div className="mt-6 flex flex-wrap gap-3">
         {availability.state === 'active' ? (
-          exercise.submittedImageUrl !== '' && exercise.submittedFileName !== '' ? (
+          localExercise?.submittedImageUrl !== '' && localExercise?.submittedFileName !== '' ? (
             <div className="panel flex items-center w-full mb-4 justify-center p-6 text-center text-sm text-slate-500">
               Work submitted ✅.
             </div>
-          ) : !paymentLocked && exercise ? (
+          ) : !paymentLocked && localExercise ? (
             <SubmissionUpload
-              exerciseId={exercise.id}
+              exerciseId={localExercise.id}
               onSubmit={({ file, exerciseId }) => uploadSubmissionImage({ file, exerciseId, studentId })}
-              exercise={exercise}
+              exercise={{ ...localExercise, onSubmitted: handleSubmissionSuccess }}
             />
           ) : (
             <div className="panel flex min-h-56 items-center justify-center p-6 text-center text-sm text-slate-500">
@@ -161,6 +182,7 @@ export const ExerciseCard = ({ exercise, availability, paymentLocked, studentId,
                 )}
                 <button 
                   onClick={() => setReviewingItem(item)} 
+                  disabled={isSavingReview}
                   className="btn-secondary text-sm mt-4"
                 >
                   Mark ✅
@@ -178,12 +200,14 @@ export const ExerciseCard = ({ exercise, availability, paymentLocked, studentId,
             />
             <button 
               onClick={() => setReviewingItem(null)} 
+              disabled={isSavingReview}
               className="btn-secondary mt-2"
             >
               Cancel Review
             </button>
           </div>
         )}
+        {reviewStatus ? <p className={`text-sm ${reviewStatus.includes('failed') ? 'text-rose-600' : 'text-emerald-600'}`}>{reviewStatus}</p> : null}
       </div>
     </div>
   );

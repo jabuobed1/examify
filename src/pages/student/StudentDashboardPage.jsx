@@ -12,32 +12,39 @@ import {
   getFutureExercises,
   getRoleDashboardData,
   getStudentAccessState,
-  getSubmissionForExercise,
   getTodayExercise,
+  subscribeToStudentExerciseHistory,
+  subscribeToTodayExercise,
   subscribeToUserProfile,
 } from '../../services/firestoreService';
 import { getSubscriptionQuote } from '../../services/paymentsService';
 
+const dashboardCacheByStudent = new Map();
+
 export const StudentDashboardPage = () => {
   const { profile, logout } = useAuth();
-  const [dashboard, setDashboard] = useState(null);
+  const cached = profile?.uid ? dashboardCacheByStudent.get(profile.uid) : null;
+  const [dashboard, setDashboard] = useState(cached?.dashboard ?? null);
   const [history, setHistory] = useState([]);
   const [currentWeek, setCurrentWeek] = useState([]);
   const [futureExercises, setFutureExercises] = useState([]);
   const [loadError, setLoadError] = useState('');
   const [accessState, setAccessState] = useState(null);
   const [tutorProfile, setTutorProfile] = useState(null);
+  const [isInitialLoading, setIsInitialLoading] = useState(!cached?.dashboard);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
 
   const [isGenerating, setIsGenerating] = useState(false);
-  const [generationMode, setGenerationMode] = useState('idle');
   const [generationProgress, setGenerationProgress] = useState(0);
   const [generationMessage, setGenerationMessage] = useState('');
+  const [showGenerationPanel, setShowGenerationPanel] = useState(false);
 
   const [viewMode, setViewMode] = useState('current');
 
-  const runGeneratePlan = async (mode) => {
+  const runGeneratePlan = async (mode, { silent = false } = {}) => {
     setIsGenerating(true);
-    setGenerationMode(mode);
+    setShowGenerationPanel(!silent);
     setGenerationProgress(10);
     setGenerationMessage(`${mode === 'initial' ? 'Initial' : 'Weekly'} AI generation started...`);
 
@@ -59,6 +66,7 @@ export const StudentDashboardPage = () => {
       return null;
     } finally {
       setTimeout(() => setIsGenerating(false), 400);
+      if (silent) setShowGenerationPanel(false);
     }
   };
 
@@ -71,116 +79,140 @@ export const StudentDashboardPage = () => {
     }
   }, [profile?.tutorId]);
 
+  const refreshDashboardData = async ({ showStatus = false } = {}) => {
+    if (!profile?.uid) return;
+    if (showStatus) {
+      setIsRefreshing(true);
+      setStatusMessage('Refreshing dashboard...');
+    }
+    try {
+      const [data, exerciseHistory, currentWeekExercises, futureExs, studentAccess, liveTodayExercise] = await Promise.all([
+        getRoleDashboardData('student', { studentId: profile?.uid }),
+        getExerciseHistory(profile?.uid),
+        getCurrentWeekExercises(profile?.uid),
+        getFutureExercises(profile?.uid),
+        getStudentAccessState(profile),
+        getTodayExercise(profile?.uid),
+      ]);
+
+      const todaySubmitted = Boolean(liveTodayExercise?.submittedImageUrl || liveTodayExercise?.submittedFileName);
+      const mergedDashboard = {
+        ...data,
+        todayExercise: liveTodayExercise ? { ...liveTodayExercise, submitted: todaySubmitted } : null,
+        paymentCompleted: studentAccess.paymentCompleted,
+        generationStatus: studentAccess.generationStatus,
+      };
+
+      setDashboard(mergedDashboard);
+      setHistory(exerciseHistory);
+      setCurrentWeek(currentWeekExercises);
+      setFutureExercises(futureExs);
+      setAccessState(studentAccess);
+      setLoadError('');
+      dashboardCacheByStudent.set(profile.uid, { dashboard: mergedDashboard, updatedAt: Date.now() });
+      if (showStatus) setStatusMessage('Dashboard updated.');
+
+      if (!studentAccess.paymentCompleted) {
+        setLoadError('Complete payment first. Exercises and exercise generation remains locked until payment is recorded.');
+        return;
+      }
+
+      if (studentAccess.initialGenerationReady) {
+        const generationResult = await runGeneratePlan('initial', { silent: true });
+        if (generationResult?.generated) {
+          await refreshDashboardData();
+        }
+      } else if (studentAccess.weeklyGenerationReady) {
+        const generationResult = await runGeneratePlan('weekly', { silent: true });
+        if (generationResult?.generated) {
+          await refreshDashboardData();
+        }
+      }
+    } catch (error) {
+      setDashboard((current) => current ?? { stats: [], todayExercise: null, feedback: [], peerReviewAssignment: null });
+      setHistory([]);
+      setLoadError('Some student dashboard data could not be loaded yet. Please try again after confirming the required student records are available.');
+      if (showStatus) setStatusMessage('Refresh failed. Please try again.');
+    } finally {
+      setIsInitialLoading(false);
+      if (showStatus) {
+        setIsRefreshing(false);
+        setTimeout(() => setStatusMessage(''), 1800);
+      }
+    }
+  };
+
   useEffect(() => {
     const load = async () => {
       try {
-        const data = await getRoleDashboardData('student', { studentId: profile?.uid });
-        const exerciseHistory = await getExerciseHistory(profile?.uid);
-        const currentWeekExercises = await getCurrentWeekExercises(profile?.uid);
-        const futureExs = await getFutureExercises(profile?.uid);
-        const studentAccess = await getStudentAccessState(profile);
-        const liveTodayExercise = await getTodayExercise(profile?.uid);
-
-        let todaySubmitted = false;
-        if (liveTodayExercise?.id) {
-          const submission = await getSubmissionForExercise(liveTodayExercise.id);
-          todaySubmitted = Boolean(submission);
-        }
-
-        setDashboard({
-          ...data,
-          todayExercise: liveTodayExercise ? { ...liveTodayExercise, submitted: todaySubmitted } : null,
-          paymentCompleted: studentAccess.paymentCompleted,
-          generationStatus: studentAccess.generationStatus,
-        });
-        setHistory(exerciseHistory);
-        setCurrentWeek(currentWeekExercises);
-        setFutureExercises(futureExs);
-        setAccessState(studentAccess);
-
-        if (!studentAccess.paymentCompleted) {
-          setLoadError('Complete payment first. Exercises and exercise generation remains locked until payment is recorded.');
-          return;
-        }
-
-        if (studentAccess.initialGenerationReady) {
-          const generationResult = await runGeneratePlan('initial');
-          console.log('[Examify][StudentDashboard] initialGenerationResult', generationResult);
-
-          if (generationResult?.generated) {
-            const [updatedData, updatedHistory, updatedCurrentWeek, updatedFuture, updatedAccess, updatedToday] = await Promise.all([
-              getRoleDashboardData('student', { studentId: profile?.uid }),
-              getExerciseHistory(profile?.uid),
-              getCurrentWeekExercises(profile?.uid),
-              getFutureExercises(profile?.uid),
-              getStudentAccessState(profile),
-              getTodayExercise(profile?.uid),
-            ]);
-
-            let todaySubmitted = false;
-            if (updatedToday?.id) {
-              const submission = await getSubmissionForExercise(updatedToday.id);
-              todaySubmitted = Boolean(submission);
-            }
-
-            setDashboard({
-              ...updatedData,
-              todayExercise: updatedToday ? { ...updatedToday, submitted: todaySubmitted } : null,
-              paymentCompleted: updatedAccess.paymentCompleted,
-              generationStatus: updatedAccess.generationStatus,
-            });
-            setHistory(updatedHistory);
-            setCurrentWeek(updatedCurrentWeek);
-            setFutureExercises(updatedFuture);
-            setAccessState(updatedAccess);
-          }
-        } else if (studentAccess.weeklyGenerationReady) {
-          const generationResult = await runGeneratePlan('weekly');
-          console.log('[Examify][StudentDashboard] weeklyGenerationResult', generationResult);
-
-          if (generationResult?.generated) {
-            const [updatedData, updatedHistory, updatedCurrentWeek, updatedFuture, updatedAccess, updatedToday] = await Promise.all([
-              getRoleDashboardData('student', { studentId: profile?.uid }),
-              getExerciseHistory(profile?.uid),
-              getCurrentWeekExercises(profile?.uid),
-              getFutureExercises(profile?.uid),
-              getStudentAccessState(profile),
-              getTodayExercise(profile?.uid),
-            ]);
-
-            let todaySubmitted = false;
-            if (updatedToday?.id) {
-              const submission = await getSubmissionForExercise(updatedToday.id);
-              todaySubmitted = Boolean(submission);
-            }
-
-            setDashboard({
-              ...updatedData,
-              todayExercise: updatedToday ? { ...updatedToday, submitted: todaySubmitted } : null,
-              paymentCompleted: updatedAccess.paymentCompleted,
-              generationStatus: updatedAccess.generationStatus,
-            });
-            setHistory(updatedHistory);
-            setCurrentWeek(updatedCurrentWeek);
-            setFutureExercises(updatedFuture);
-            setAccessState(updatedAccess);
-          }
-        }
+        await refreshDashboardData();
       } catch (error) {
-        setDashboard((current) => current ?? { stats: [], todayExercise: null, feedback: [], peerReviewAssignment: null });
-        setHistory([]);
         setLoadError('Some student dashboard data could not be loaded yet. Please try again after confirming the required student records are available.');
       }
     };
 
-    load();
-  }, [profile]);
+    if (profile?.uid) {
+      load();
+    }
+  }, [profile?.uid]);
+
+  useEffect(() => {
+    if (!profile?.uid) return () => {};
+    const unsubscribeToday = subscribeToTodayExercise(profile.uid, (todayExercise) => {
+      setDashboard((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          todayExercise: todayExercise
+            ? { ...todayExercise, submitted: Boolean(todayExercise.submittedImageUrl || todayExercise.submittedFileName) }
+            : null,
+        };
+      });
+    });
+
+    const unsubscribeHistory = subscribeToStudentExerciseHistory(profile.uid, (streams) => {
+      if (!streams) return;
+      setHistory(streams.history ?? []);
+      setCurrentWeek(streams.currentWeek ?? []);
+      setFutureExercises(streams.future ?? []);
+    });
+
+    return () => {
+      unsubscribeToday();
+      unsubscribeHistory();
+    };
+  }, [profile?.uid]);
 
   const todayExercise = dashboard?.todayExercise;
   const quote = useMemo(
     () => getSubscriptionQuote({ latestMark: profile?.latestMark ?? profile?.previousYearMark ?? 0, sessionType: profile?.sessionType ?? 'online' }),
     [profile],
   );
+
+  const handleSubmissionSaved = (result) => {
+    setDashboard((current) => {
+      if (!current?.todayExercise) return current;
+      return {
+        ...current,
+        todayExercise: {
+          ...current.todayExercise,
+          submittedImageUrl: result?.submittedImageUrl ?? current.todayExercise.submittedImageUrl,
+          submittedFileName: result?.submittedFileName ?? current.todayExercise.submittedFileName,
+          submitted: true,
+        },
+      };
+    });
+    setStatusMessage('Submission received. Syncing latest data...');
+    refreshDashboardData({ showStatus: true });
+  };
+
+  if (isInitialLoading && !dashboard) {
+    return (
+      <AppShell title="Student dashboard" subtitle="See your exercises for today and more." role="student" user={profile} onLogout={logout}>
+        <div className="panel p-6 text-sm text-slate-600">Loading your dashboard…</div>
+      </AppShell>
+    );
+  }
 
   if (!dashboard) return null;
 
@@ -207,8 +239,13 @@ export const StudentDashboardPage = () => {
       ) : null}
 
       {loadError ? <div className="panel p-4 text-sm text-amber-700">{loadError}</div> : null}
+      {isRefreshing || statusMessage ? (
+        <div className="panel p-3 text-sm text-brand-700">
+          {isRefreshing ? 'Refreshing data…' : statusMessage}
+        </div>
+      ) : null}
 
-      {isGenerating ? (
+      {isGenerating && showGenerationPanel ? (
         <div className="panel mb-4 p-4">
           <p className="font-medium text-slate-700">{generationMessage}</p>
           <div className="mt-3 h-2 w-full rounded-full bg-slate-200">
@@ -228,7 +265,7 @@ export const StudentDashboardPage = () => {
             availability={availability}
             paymentLocked={paymentLocked}
             studentId={profile?.uid}
-            dashboard={dashboard}
+            onSubmissionSaved={handleSubmissionSaved}
           />
         ) : (
           <div className="panel flex min-h-72 items-center justify-center p-6 text-center text-sm text-slate-500 w-full">

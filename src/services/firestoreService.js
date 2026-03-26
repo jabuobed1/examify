@@ -73,6 +73,12 @@ const toDateOnly = (value) => {
   return String(value).slice(0, 10);
 };
 
+const getLocalDateISO = (value = new Date()) => [
+  value.getFullYear(),
+  String(value.getMonth() + 1).padStart(2, '0'),
+  String(value.getDate()).padStart(2, '0'),
+].join('-');
+
 const buildStudentGenerationStatus = ({
   latestReport,
   availablePapers,
@@ -272,7 +278,7 @@ export const getRoleDashboardData = async (role, options = {}) => {
 export const getTodayExercise = async (studentId) => {
   if (!isFirebaseConfigured) return buildStudentDashboard(studentId).todayExercise;
   ensureDb();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getLocalDateISO();
   const q = query(
     collection(db, collections.dailyExerciseAssignments),
     where('studentId', '==', studentId),
@@ -290,12 +296,7 @@ export const getExerciseHistory = async (studentId) => {
 
   // Create a string for 'today' in the user's local timezone (YYYY-MM-DD)
   // This ensures "today" is relative to the person using the app.
-  const now = new Date();
-  const todayLocal = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, '0'),
-    String(now.getDate()).padStart(2, '0')
-  ].join('-');
+  const todayLocal = getLocalDateISO();
 
   const q = query(
     collection(db, "dailyExerciseAssignments"),
@@ -316,7 +317,7 @@ export const getCurrentWeekExercises = async (studentId) => {
     return all.filter((ex) => ex.assignmentDate >= today).slice(0, 7);
   }
   ensureDb();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getLocalDateISO();
   const q = query(
     collection(db, collections.dailyExerciseAssignments),
     where('studentId', '==', studentId),
@@ -335,7 +336,7 @@ export const getFutureExercises = async (studentId) => {
     return all.filter((ex) => ex.assignmentDate > weekFromToday);
   }
   ensureDb();
-  const weekFromToday = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const weekFromToday = getLocalDateISO(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
   const q = query(
     collection(db, collections.dailyExerciseAssignments),
     where('studentId', '==', studentId),
@@ -868,7 +869,7 @@ export const getSubmissionForExercise = async (exerciseId) => {
     return null;
   }
   ensureDb();
-  const snapshot = await getDoc(doc(db, collections.submissions, exerciseId));
+  const snapshot = await getDoc(doc(db, collections.dailyExerciseAssignments, exerciseId));
   return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
 };
 
@@ -1041,6 +1042,60 @@ export const subscribeToUserProfile = (uid, callback) => {
   return onSnapshot(doc(db, collections.users, uid), (snapshot) => {
     callback(snapshot.exists() ? snapshot.data() : null);
   }, (error) => console.error('[Examify][Firestore] subscribeToUserProfile error', error));
+};
+
+export const subscribeToTodayExercise = (studentId, callback) => {
+  if (!studentId) return () => {};
+  if (!isFirebaseConfigured) {
+    callback(buildStudentDashboard(studentId).todayExercise ?? null);
+    return () => {};
+  }
+
+  const today = getLocalDateISO();
+  const q = query(
+    collection(db, collections.dailyExerciseAssignments),
+    where('studentId', '==', studentId),
+    where('assignmentDate', '==', today),
+    limit(1),
+  );
+
+  return onSnapshot(q, (snapshot) => {
+    const item = snapshot.docs[0] ? { id: snapshot.docs[0].id, ...snapshot.docs[0].data() } : null;
+    callback(item);
+  }, (error) => console.error('[Examify][Firestore] subscribeToTodayExercise error', error));
+};
+
+export const subscribeToStudentExerciseHistory = (studentId, callback) => {
+  if (!studentId) return () => {};
+  if (!isFirebaseConfigured) {
+    const all = buildStudentDashboard(studentId).exerciseHistory ?? [];
+    const today = getLocalDateISO();
+    const weekFromToday = getLocalDateISO(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+    callback({
+      history: all.filter((item) => item.assignmentDate < today).slice(0, 20),
+      currentWeek: all.filter((item) => item.assignmentDate >= today && item.assignmentDate <= weekFromToday).slice(0, 7),
+      future: all.filter((item) => item.assignmentDate > weekFromToday).slice(0, 20),
+    });
+    return () => {};
+  }
+
+  const q = query(
+    collection(db, collections.dailyExerciseAssignments),
+    where('studentId', '==', studentId),
+    orderBy('assignmentDate', 'desc'),
+    limit(60),
+  );
+
+  return onSnapshot(q, (snapshot) => {
+    const all = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+    const today = getLocalDateISO();
+    const weekFromToday = getLocalDateISO(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+    callback({
+      history: all.filter((item) => item.assignmentDate < today).slice(0, 20),
+      currentWeek: all.filter((item) => item.assignmentDate >= today && item.assignmentDate <= weekFromToday).reverse(),
+      future: all.filter((item) => item.assignmentDate > weekFromToday).reverse().slice(0, 20),
+    });
+  }, (error) => console.error('[Examify][Firestore] subscribeToStudentExerciseHistory error', error));
 };
 
 
