@@ -1,0 +1,24 @@
+Before working in Firebase Studio
+
+git status
+git pull --rebase origin main
+
+After editing in Codespaces and Before asking Codex
+
+git status
+git add .
+git commit -m "Commit after Changing the landing page design. 24-03-2026."
+git push origin main
+
+
+These are for injecting keys to Firebase:
+
+firebase functions:secrets:set PAYSTACK_CONFIG
+firebase functions:secrets:set APP_CONFIG
+firebase functions:secrets:set GEMINI_CONFIG
+
+Deploying to Hosting:
+
+npm run build
+firebase deploy --only hosting:examify
+firebase deploy --only functions

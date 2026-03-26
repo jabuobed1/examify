@@ -1,0 +1,105 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #020617;
+  color: #e2e8f0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top, rgba(37, 99, 235, 0.15), transparent 30%),
+    linear-gradient(180deg, #020617 0%, #0f172a 25%, #f8fafc 25%, #f8fafc 100%);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+@layer components {
+  .panel {
+    @apply rounded-2xl border border-slate-200 bg-white shadow-sm;
+  }
+
+  .panel-dark {
+    @apply rounded-3xl border border-white/10 bg-slate-900/80 shadow-glow backdrop-blur;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-full bg-brand-600 px-5 py-3 text-sm font-semibold text-white transition-all transform hover:-translate-y-1 hover:shadow-[0_6px_0_0_#1d4ed8,0_10px_15px_-3px_rgba(0,0,0,0.1)] active:translate-y-0 active:shadow-none;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-full border border-slate-300 bg-white/5 backdrop-blur-md px-5 py-3 text-sm font-semibold text-slate-700 transition-all transform hover:-translate-y-1 hover:border-slate-400 hover:shadow-[0_6px_0_0_#cbd5e1,0_10px_15px_-3px_rgba(0,0,0,0.1)] active:translate-y-0 active:shadow-none;
+  }
+
+  .input {
+    @apply w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-4 focus:ring-brand-100;
+  }
+
+  .label {
+    @apply mb-2 block text-sm font-medium text-slate-700;
+  }
+
+  .perspective-1000 {
+    perspective: 1000px;
+    transform-style: preserve-3d;
+  }
+  
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
+  
+  .animate-float-slow {
+    animation: float-slow 8s ease-in-out infinite;
+  }
+  
+  .animate-float-medium {
+    animation: float-medium 6s ease-in-out infinite;
+  }
+  
+  .animate-float-fast {
+    animation: float-fast 5s ease-in-out infinite;
+    animation-delay: 1s;
+  }
+  
+  .animate-glow {
+    animation: glowpulse 4s ease-in-out infinite;
+  }
+}
+
+@keyframes float-fast {
+  0%, 100% { transform: translateY(0) translateZ(50px) rotateX(15deg) rotateY(-20deg) scale(0.95); }
+  50% { transform: translateY(-20px) translateZ(80px) rotateX(20deg) rotateY(-15deg) scale(1.05); }
+}
+
+@keyframes float-medium {
+  0%, 100% { transform: translateY(0) translateZ(-20px) rotateX(15deg) rotateY(-15deg) scale(0.9); }
+  50% { transform: translateY(20px) translateZ(30px) rotateX(10deg) rotateY(-20deg) scale(1); }
+}
+
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0) translateZ(-40px) rotateX(10deg) rotateY(-10deg) scale(0.85); }
+  50% { transform: translateY(-15px) translateZ(10px) rotateX(18deg) rotateY(-25deg) scale(0.9); }
+}
+
+@keyframes glowpulse {
+  0%, 100% { opacity: 0.3; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.1); }
+}
+
+@layer base {
+  button:disabled {
+    @apply bg-slate-400 text-slate-200 cursor-not-allowed opacity-60;
+  }
+}
