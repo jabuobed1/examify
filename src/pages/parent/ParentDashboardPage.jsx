@@ -192,7 +192,8 @@ export const ParentDashboardPage = () => {
         latestMark: student.previousYearMark ?? 0,
         sessionType: student.sessionType ?? 'online',
         paidByParent: true,
-        parentId: profile?.uid
+        parentId: profile?.uid,
+        payer: 'parent'
       });
 
       if (!result?.authorizationUrl) {
@@ -204,35 +205,6 @@ export const ParentDashboardPage = () => {
       setLoading(false);
     }
   };
-
-  const handlePayForAll = async () => {
-    const unpaidStudents = students.filter(s => !s.paymentCompleted);
-    if (unpaidStudents.length === 0) return;
-    
-    try {
-      setLoading(true);
-      const result = await initializeSubscriptionPayment({
-        email: profile?.email,
-        studentIds: unpaidStudents.map(s => ({
-          id: s.uid,
-          latestMark: s.previousYearMark ?? 0,
-          sessionType: s.sessionType ?? 'online',
-        })),
-        paidByParent: true,
-        parentId: profile?.uid
-      });
-
-      if (!result?.authorizationUrl) {
-        throw new Error('No bulk Paystack authorization URL was returned.');
-      }
-      window.location.href = result.authorizationUrl;
-    } catch (error) {
-      alert(error?.message || 'Unable to process bulk payment right now.');
-      setLoading(false);
-    }
-  };
-
-  const unpaidCount = students.filter(s => !s.paymentCompleted).length;
 
   return (
     <AppShell
@@ -273,24 +245,6 @@ export const ParentDashboardPage = () => {
         <div className="mb-6 p-4 rounded-xl bg-slate-100 text-brand-700 flex items-center gap-2 text-sm font-medium">
           <AlertCircle className="w-4 h-4" />
           {status}
-        </div>
-      )}
-
-      {students.length > 0 && (
-        <div className="mb-6 flex justify-between items-center bg-brand-50 rounded-2xl p-6 border border-brand-100 shadow-sm">
-          <div>
-            <h3 className="font-bold text-slate-900 text-lg">Payments</h3>
-            <p className="text-slate-600 text-sm mt-1">You have {unpaidCount} student{unpaidCount !== 1 && 's'} requiring payment updates.</p>
-          </div>
-          {unpaidCount > 0 && (
-            <button 
-              className="btn-primary px-8" 
-              onClick={handlePayForAll}
-              disabled={loading}
-            >
-              Pay for All At Once
-            </button>
-          )}
         </div>
       )}
 

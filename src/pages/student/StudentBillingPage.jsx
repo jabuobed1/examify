@@ -90,6 +90,7 @@ export const StudentBillingPage = () => {
         studentId: profile?.uid,
         latestMark:  profile?.previousYearMark ?? 0,
         sessionType: profile?.sessionType ?? 'online',
+        payer: 'student',
       });
 
       if (!result?.authorizationUrl) {

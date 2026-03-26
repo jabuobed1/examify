@@ -61,7 +61,7 @@ const callableOptions = {
 
 export const initializePaystackTransaction = onCall(callableOptions, async (request) => {
   try {
-    const { email, studentId, latestMark, sessionType, studentIds } = request.data ?? {};
+    const { email, studentId, latestMark, sessionType, studentIds, payer } = request.data ?? {};
 
     if (!email || (!studentId && (!studentIds || studentIds.length === 0))) {
       throw new HttpsError('invalid-argument', 'email and either studentId or studentIds are required.');
@@ -72,6 +72,8 @@ export const initializePaystackTransaction = onCall(callableOptions, async (requ
     if (!paystackCallbackUrl) {
       throw new HttpsError('failed-precondition', 'Missing PAYSTACK_CONFIG.callbackUrl.');
     }
+
+    const baseUrl = paystackCallbackUrl.replace('/student/billing', '');
 
     const db = getDb();
     let totalAmount = 0;
@@ -108,11 +110,12 @@ export const initializePaystackTransaction = onCall(callableOptions, async (requ
         amount: Math.round(totalAmount * 100),
         currency: 'ZAR',
         reference,
-        callback_url: paystackCallbackUrl,
+        callback_url: `${baseUrl}${payer === 'parent' ? '/parent/dashboard' : '/student/billing'}`,
         metadata: {
           studentId: studentId || null,
           studentIds: studentIds ? JSON.stringify(studentIds.map(s => s.id)) : null,
           subject: 'Mathematics',
+          payer: payer || 'student',
         },
       },
     });
@@ -186,34 +189,17 @@ export const verifyPaystackTransaction = onCall(callableOptions, async (request)
       if (Array.isArray(parsedIds)) {
         targetStudents = [...new Set([...targetStudents, ...parsedIds])];
       }
-    } catch(e) {}
+    } catch (e) {
+      logger.warn('Failed to parse studentIds metadata', e);
+    }
   }
 
-  if (authorization?.authorization_code && targetStudents.length > 0) {
+  if (targetStudents.length > 0) {
     const nextRenewalDate = admin.firestore.Timestamp.fromDate(
       new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
     );
 
     for (const sId of targetStudents) {
-      await db.collection('subscriptionAuthorizations').doc(sId).set(
-        {
-          studentId: sId,
-          email: transaction.customer?.email ?? null,
-          authorizationCode: authorization.authorization_code,
-          bin: authorization.bin,
-          last4: authorization.last4,
-          expMonth: authorization.exp_month,
-          expYear: authorization.exp_year,
-          cardType: authorization.card_type,
-          bank: authorization.bank,
-          reusable: authorization.reusable,
-          signature: authorization.signature,
-          storedAt: admin.firestore.FieldValue.serverTimestamp(),
-          reference,
-        },
-        { merge: true }
-      );
-
       await db.collection('subscriptions').doc(sId).set(
         {
           studentId: sId,
@@ -235,6 +221,29 @@ export const verifyPaystackTransaction = onCall(callableOptions, async (request)
           latestPaymentReference: reference,
           subscriptionRenewalDate: transaction.status === 'success' ? nextRenewalDate : null,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+  }
+
+  if (authorization?.authorization_code && targetStudents.length > 0) {
+    for (const sId of targetStudents) {
+      await db.collection('subscriptionAuthorizations').doc(sId).set(
+        {
+          studentId: sId,
+          email: transaction.customer?.email ?? null,
+          authorizationCode: authorization.authorization_code,
+          bin: authorization.bin,
+          last4: authorization.last4,
+          expMonth: authorization.exp_month,
+          expYear: authorization.exp_year,
+          cardType: authorization.card_type,
+          bank: authorization.bank,
+          reusable: authorization.reusable,
+          signature: authorization.signature,
+          storedAt: admin.firestore.FieldValue.serverTimestamp(),
+          reference,
         },
         { merge: true }
       );
