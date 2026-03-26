@@ -1,0 +1,13 @@
+{
+  "projects": {},
+  "targets": {
+    "tutoring-e68f8": {
+      "hosting": {
+        "examify": [
+          "bakayise-examify"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}
