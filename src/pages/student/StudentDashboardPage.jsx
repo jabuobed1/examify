@@ -99,7 +99,7 @@ export const StudentDashboardPage = () => {
         setAccessState(studentAccess);
 
         if (!studentAccess.paymentCompleted) {
-          setLoadError('Complete payment first. Exercises and AI generation remain locked until payment is recorded.');
+          setLoadError('Complete payment first. Exercises and exercise generation remains locked until payment is recorded.');
           return;
         }
 
@@ -190,7 +190,7 @@ export const StudentDashboardPage = () => {
   return (
     <AppShell
       title="Student dashboard"
-      subtitle="Track payment readiness, AI generation criteria, tutor reports, and today’s approved Maths workflow."
+      subtitle="See your exercises for today and more."
       role="student"
       user={profile}
       onLogout={logout}

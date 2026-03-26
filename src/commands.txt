@@ -7,7 +7,7 @@ After editing in Codespaces and Before asking Codex
 
 git status
 git add .
-git commit -m "Commit before pull request. 24-03-2026."
+git commit -m "Commit after confirming parent payment is working. 24-03-2026."
 git push origin main
 
 

@@ -233,12 +233,6 @@ export const StudentBillingPage = () => {
             <p>Weekly generation ready: {String(accessState.weeklyGenerationReady)}</p>
           </div>
         ) : null}
-
-        <p>
-          {isDemoMode
-            ? 'Demo mode is active.'
-            : 'Live mode is active. Payment verification is handled automatically after Paystack redirects back.'}
-        </p>
       </div>
     </AppShell>
   );
