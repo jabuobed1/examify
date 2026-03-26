@@ -67,6 +67,10 @@ export const initializePaystackTransaction = onCall(callableOptions, async (requ
       throw new HttpsError('invalid-argument', 'email and either studentId or studentIds are required.');
     }
 
+    if (payer === 'parent' && !studentId) {
+      throw new HttpsError('invalid-argument', 'Parent payments must be initialized per student using studentId.');
+    }
+
     const { paystackCallbackUrl } = getPaystackConfig();
 
     if (!paystackCallbackUrl) {
@@ -110,7 +114,7 @@ export const initializePaystackTransaction = onCall(callableOptions, async (requ
         amount: Math.round(totalAmount * 100),
         currency: 'ZAR',
         reference,
-        callback_url: `${baseUrl}${payer === 'parent' ? '/parent/dashboard' : '/student/billing'}`,
+        callback_url: `${baseUrl}${payer === 'parent' ? '/parent' : '/student/billing'}`,
         metadata: {
           studentId: studentId || null,
           studentIds: studentIds ? JSON.stringify(studentIds.map(s => s.id)) : null,
