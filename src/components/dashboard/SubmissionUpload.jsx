@@ -5,22 +5,28 @@ export const SubmissionUpload = ({ exerciseId, onSubmit, exercise }) => {
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [status, setStatus] = useState('idle');
 
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (!file) {
       setMessage('Please choose an image before uploading.');
+      setStatus('error');
       return;
     }
     setLoading(true);
     setMessage('');
+    setStatus('idle');
     try {
       const result = await onSubmit({ file, exerciseId });
       setMessage(`Submission saved: ${result.submittedFileName}`);
+      setStatus('success');
       setFile(null);
       event.target.reset();
+      exercise?.onSubmitted?.(result);
     } catch (error) {
       setMessage(error.message);
+      setStatus('error');
     } finally {
       setLoading(false);
     }
@@ -37,7 +43,7 @@ export const SubmissionUpload = ({ exerciseId, onSubmit, exercise }) => {
         <UploadCloud className="h-4 w-4" />
         {loading ? 'Uploading…' : `Submit image`}
       </button>
-      {message ? <p className="text-sm text-red">{message}</p> : null}
+      {message ? <p className={`text-sm ${status === 'error' ? 'text-rose-600' : 'text-emerald-600'}`}>{message}</p> : null}
     </form>
   );
 };
