@@ -26,7 +26,7 @@ export const StudentBillingPage = () => {
   const quote = useMemo(
     () =>
       getSubscriptionQuote({
-        latestMark:  profile?.previousYearMark ?? 0,
+        latestMark: profile?.latestMark ?? profile?.previousYearMark ?? 0,
         sessionType: profile?.sessionType ?? 'online',
       }),
     [profile],
@@ -88,7 +88,7 @@ export const StudentBillingPage = () => {
       const result = await initializeSubscriptionPayment({
         email: profile?.email,
         studentId: profile?.uid,
-        latestMark:  profile?.previousYearMark ?? 0,
+        latestMark: profile?.latestMark ?? profile?.previousYearMark ?? 0,
         sessionType: profile?.sessionType ?? 'online',
         payer: 'student',
       });
@@ -160,7 +160,7 @@ export const StudentBillingPage = () => {
       <SectionHeader
         eyebrow="Subscription"
         title="Current recommendation"
-        description="Examify calculates the monthly amount from the student-entered previous year mark until fresh learning data is available."
+        description="Examify calculates the monthly amount from the latest accepted mark (or previous year mark before an assessment is accepted)."
       />
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -172,9 +172,9 @@ export const StudentBillingPage = () => {
         </div>
 
         <div className="panel p-5">
-          <p className="text-sm text-slate-500">Previous year mark</p>
+          <p className="text-sm text-slate-500">Latest mark used for billing</p>
           <p className="mt-2 text-2xl font-bold text-slate-950">
-            {profile?.previousYearMark ?? 0}%
+            {profile?.latestMark ?? profile?.previousYearMark ?? 0}%
           </p>
         </div>
 

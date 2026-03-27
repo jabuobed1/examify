@@ -189,7 +189,7 @@ export const ParentDashboardPage = () => {
       const result = await initializeSubscriptionPayment({
         email: profile?.email,
         studentId: student.uid,
-        latestMark: student.previousYearMark ?? 0,
+        latestMark: student.latestMark ?? student.previousYearMark ?? 0,
         sessionType: student.sessionType ?? 'online',
         paidByParent: true,
         parentId: profile?.uid,
