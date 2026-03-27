@@ -31,6 +31,69 @@ const toPaperKey = (paper = {}) => [
   String(paper.month || '').toLowerCase(),
 ].join('|');
 
+const normalizeName = (value = '') =>
+  String(value)
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const detectProvinceFromText = (text = '') => {
+  const normalizedText = normalizeName(text);
+  return REGIONS.find((region) => normalizeName(region) !== 'national' && normalizedText.includes(normalizeName(region))) || REGIONS[0];
+};
+
+const detectGradeFromText = (text = '') => {
+  const gradeMatch = normalizeName(text).match(/grade\s*(\d{1,2})/i);
+  if (!gradeMatch) return SOUTH_AFRICAN_GRADES[1];
+  const detected = `Grade ${gradeMatch[1]}`;
+  return SOUTH_AFRICAN_GRADES.includes(detected) ? detected : SOUTH_AFRICAN_GRADES[1];
+};
+
+const detectPaperNumberFromText = (text = '') => {
+  const normalizedText = normalizeName(text);
+  if (/\bp\s*1\b/i.test(normalizedText)) return 'P1';
+  if (/\bp\s*2\b/i.test(normalizedText)) return 'P2';
+  if (/\bp\s*3\b/i.test(normalizedText)) return 'P3';
+  return 'Non';
+};
+
+const detectCurriculumFromText = (text = '') => {
+  const normalizedText = normalizeName(text);
+  if (normalizedText.includes('ieb')) return 'IEB';
+  if (normalizedText.includes('caps')) return 'CAPS';
+  return CURRICULUMS[0];
+};
+
+const detectYearFromText = (text = '') => {
+  const yearMatch = normalizeName(text).match(/\b(20\d{2})\b/);
+  return yearMatch ? Number(yearMatch[1]) : new Date().getFullYear();
+};
+
+const detectMonthFromText = (text = '') => {
+  const normalizedText = normalizeName(text);
+  return PAPER_MONTHS.find((month) => normalizedText.includes(month.toLowerCase())) || PAPER_MONTHS[0];
+};
+
+const extractBulkPaperMetadata = (file) => {
+  const baseName = String(file?.name || '').replace(/\.[^/.]+$/, '');
+  const province = detectProvinceFromText(baseName);
+
+  return {
+    grade: detectGradeFromText(baseName),
+    subject: SUBJECT,
+    province,
+    region: province,
+    paperNumber: detectPaperNumberFromText(baseName),
+    curriculum: detectCurriculumFromText(baseName),
+    year: detectYearFromText(baseName),
+    month: detectMonthFromText(baseName),
+    source: 'Manual Upload',
+    sourceWebsite: '',
+    notes: '',
+  };
+};
+
 export const PastExamPapersPage = () => {
   const { profile, logout } = useAuth();
   const [papers, setPapers] = useState([]);
@@ -39,21 +102,9 @@ export const PastExamPapersPage = () => {
   const [savingDraft, setSavingDraft] = useState(false);
   const [searching, setSearching] = useState(false);
   const [draft, setDraft] = useState(null);
-  const [form, setForm] = useState({
-    grade: SOUTH_AFRICAN_GRADES[0],
-    region: REGIONS[0],
-    subject: SUBJECT,
-    year: new Date().getFullYear(),
-    month: PAPER_MONTHS[0],
-    curriculum: CURRICULUMS[0],
-    paperNumber: PAPER_NUMBERS[0],
-    notes: '',
-    paperFile: null,
-    memoFile: null,
-    source: '',
-    sourceWebsite: '',
-    province: REGIONS[0],
-  });
+  const [bulkRows, setBulkRows] = useState([]);
+  const [savingRows, setSavingRows] = useState({});
+  const [bulkSaving, setBulkSaving] = useState(false);
 
   const [searchForm, setSearchForm] = useState({
     subject: SUBJECT,
@@ -93,61 +144,115 @@ export const PastExamPapersPage = () => {
     loadDraft();
   }, [isTutor, profile?.uid, searchForm]);
 
-  const handleChange = (key) => (event) => {
-    const value = key.endsWith('File') ? event.target.files?.[0] ?? null : event.target.value;
-    setForm((current) => ({ ...current, [key]: value }));
-  };
-
   const handleSearchChange = (key) => (event) => {
     const value = event.target.value;
     setSearchForm((current) => ({ ...current, [key]: key === 'year' ? Number(value) : value }));
   };
 
-  const handleSubmit = async (event) => {
-    event.preventDefault();
-    console.log('[Examify][PastPapers] submit:start', form);
-    setStatus('Uploading documents and checking duplicates...');
+  const updateBulkRow = (rowId, key, value) => {
+    setBulkRows((current) => current.map((row) => (row.id === rowId ? { ...row, [key]: value } : row)));
+  };
+
+  const markBulkRowState = (rowId, payload = {}) => {
+    setBulkRows((current) => current.map((row) => (row.id === rowId ? { ...row, ...payload } : row)));
+  };
+
+  const handleBulkFilesChange = (event) => {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) {
+      setStatus('Please select at least one paper document.');
+      return;
+    }
+
+    const newRows = files.map((file, index) => ({
+      id: `${Date.now()}-${index}-${file.name}`,
+      file,
+      fileName: file.name,
+      saveState: 'pending',
+      saveMessage: '',
+      ...extractBulkPaperMetadata(file),
+    }));
+
+    setBulkRows((current) => [...newRows, ...current]);
+    setStatus(`${files.length} paper(s) loaded. Review fields and save individually or in bulk.`);
+    event.target.value = '';
+  };
+
+  const persistBulkRow = async (row) => {
+    if (!row?.file) throw new Error('No paper file found for this row.');
+
+    const uploads = await uploadQuestionPaperDocuments({
+      paperFile: row.file,
+      memoFile: null,
+      uploaderId: profile?.uid ?? 'anonymous',
+    });
+
+    const saved = await saveQuestionPaper({
+      grade: row.grade,
+      region: row.province,
+      province: row.province,
+      subject: row.subject || SUBJECT,
+      curriculum: row.curriculum,
+      year: Number(row.year),
+      month: row.month,
+      paperNumber: row.paperNumber,
+      notes: row.notes,
+      source: row.source,
+      sourceWebsite: row.sourceWebsite,
+      paperUrl: uploads.paperUrl,
+      memoUrl: '',
+      paperFileName: uploads.paperFileName,
+      memoFileName: '',
+      createdBy: profile?.uid ?? 'unknown',
+    });
+
+    return saved;
+  };
+
+  const handleSaveBulkRow = async (rowId) => {
+    const row = bulkRows.find((item) => item.id === rowId);
+    if (!row || row.saveState === 'saved') return false;
+
+    setSavingRows((current) => ({ ...current, [rowId]: true }));
+    markBulkRowState(rowId, { saveState: 'saving', saveMessage: 'Saving...' });
 
     try {
-      const uploads = await uploadQuestionPaperDocuments({
-        paperFile: form.paperFile,
-        memoFile: form.memoFile,
-        uploaderId: profile?.uid ?? 'anonymous',
-      });
-      const saved = await saveQuestionPaper({
-        grade: form.grade,
-        region: form.region,
-        province: form.province || form.region,
-        subject: form.subject,
-        curriculum: form.curriculum,
-        year: Number(form.year),
-        month: form.month,
-        paperNumber: form.paperNumber,
-        notes: form.notes,
-        source: form.source,
-        sourceWebsite: form.sourceWebsite,
-        paperUrl: uploads.paperUrl,
-        memoUrl: uploads.memoUrl,
-        paperFileName: uploads.paperFileName,
-        memoFileName: uploads.memoFileName,
-        createdBy: profile?.uid ?? 'unknown',
-      });
+      const saved = await persistBulkRow(row);
       setPapers((current) => [saved, ...current]);
-      setStatus('Past exam paper saved successfully.');
-      setForm((current) => ({
-        ...current,
-        notes: '',
-        paperFile: null,
-        memoFile: null,
-        source: '',
-        sourceWebsite: '',
-        year: new Date().getFullYear(),
-      }));
-      event.target.reset();
+      markBulkRowState(rowId, { saveState: 'saved', saveMessage: 'Saved successfully.' });
+      setStatus('Paper saved successfully.');
+      return true;
     } catch (error) {
-      console.error('[Examify][PastPapers] submit:error', error);
-      setStatus(error.message);
+      markBulkRowState(rowId, { saveState: 'error', saveMessage: error.message || 'Failed to save this paper.' });
+      setStatus(error.message || 'Failed to save one or more papers.');
+      return false;
+    } finally {
+      setSavingRows((current) => ({ ...current, [rowId]: false }));
     }
+  };
+
+  const handleSaveAllBulkRows = async () => {
+    const pendingRows = bulkRows.filter((row) => row.saveState !== 'saved');
+    if (!pendingRows.length) {
+      setStatus('All loaded papers are already saved.');
+      return;
+    }
+
+    setBulkSaving(true);
+    setStatus(`Saving ${pendingRows.length} paper(s)...`);
+
+    let successCount = 0;
+    for (const row of pendingRows) {
+      const wasSaved = await handleSaveBulkRow(row.id);
+      if (wasSaved) successCount += 1;
+    }
+
+    setStatus(`Bulk save completed. ${successCount} of ${pendingRows.length} paper(s) saved.`);
+    setBulkSaving(false);
+  };
+
+  const handleRemoveBulkRow = (rowId) => {
+    setBulkRows((current) => current.filter((row) => row.id !== rowId));
   };
 
   const handleAiSearch = async () => {
@@ -228,11 +333,122 @@ export const PastExamPapersPage = () => {
     >
       <SectionHeader eyebrow="Repository" title="Shared past exam papers" description="Students, tutors, and admins can browse this paper library and upload new papers with an optional memorandum." />
       <div className="space-y-6">
+        <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+          <div className="space-y-4">
+            {papers.map((paper) => (
+              <div key={paper.id} className="panel p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-950">{paper.subject} • {paper.grade} {paper.paperNumber ? `• ${paper.paperNumber}` : ''}</h3>
+                    <p className="mt-1 text-sm text-slate-500">{paper.region || paper.province} • {paper.month} {paper.year} {paper.curriculum ? `• ${paper.curriculum}` : ''}</p>
+                  </div>
+                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.25em] text-slate-600">{paper.region || paper.province}</span>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-3 text-sm">
+                  <a className="btn-secondary" href={paper.paperUrl} target="_blank" rel="noreferrer">Open paper</a>
+                  {paper.memoUrl ? <a className="btn-secondary" href={paper.memoUrl} target="_blank" rel="noreferrer">Open memo</a> : <span className="rounded-full bg-slate-50 px-3 py-2 text-slate-500">No memo uploaded</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="panel space-y-4 p-6">
+            <div>
+              <h3 className="text-xl font-semibold text-slate-950">Bulk upload past exam papers</h3>
+              <p className="mt-2 text-sm text-slate-500">Upload multiple paper files once. Examify extracts fields locally from each filename, lets you edit, then save one-by-one or all together.</p>
+            </div>
+            <label>
+              <span className="label">Paper documents (multiple)</span>
+              <input type="file" multiple className="input" accept=".pdf,.doc,.docx,image/*" onChange={handleBulkFilesChange} />
+            </label>
+            <div className="flex flex-wrap gap-3">
+              <button type="button" className="btn-primary" onClick={handleSaveAllBulkRows} disabled={bulkSaving || !bulkRows.length}>
+                {bulkSaving ? 'Saving all...' : 'Save all loaded papers'}
+              </button>
+            </div>
+            {status ? <p className="text-sm text-slate-600">{status}</p> : null}
+
+            {bulkRows.length ? (
+              <div className="space-y-4">
+                {bulkRows.map((row) => (
+                  <div key={row.id} className="rounded-2xl border border-slate-200 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-slate-900">{row.fileName}</p>
+                      <span className={`rounded-full px-3 py-1 text-xs font-semibold ${row.saveState === 'saved' ? 'bg-emerald-100 text-emerald-700' : row.saveState === 'error' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-700'}`}>
+                        {row.saveState === 'saved' ? 'Saved' : row.saveState === 'error' ? 'Error' : 'Pending'}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <label>
+                        <span className="label">Grade</span>
+                        <select className="input" value={row.grade} onChange={(event) => updateBulkRow(row.id, 'grade', event.target.value)}>
+                          {SOUTH_AFRICAN_GRADES.filter((grade) => grade !== 'Select Grade').map((grade) => <option key={grade}>{grade}</option>)}
+                        </select>
+                      </label>
+                      <label>
+                        <span className="label">Subject</span>
+                        <input className="input" value={row.subject} onChange={(event) => updateBulkRow(row.id, 'subject', event.target.value)} />
+                      </label>
+                      <label>
+                        <span className="label">Province</span>
+                        <select className="input" value={row.province} onChange={(event) => updateBulkRow(row.id, 'province', event.target.value)}>
+                          {REGIONS.map((region) => <option key={region}>{region}</option>)}
+                        </select>
+                      </label>
+                      <label>
+                        <span className="label">Paper number</span>
+                        <select className="input" value={row.paperNumber} onChange={(event) => updateBulkRow(row.id, 'paperNumber', event.target.value)}>
+                          {PAPER_NUMBERS.map((item) => <option key={item}>{item}</option>)}
+                        </select>
+                      </label>
+                      <label>
+                        <span className="label">Curriculum</span>
+                        <select className="input" value={row.curriculum} onChange={(event) => updateBulkRow(row.id, 'curriculum', event.target.value)}>
+                          {CURRICULUMS.map((item) => <option key={item}>{item}</option>)}
+                        </select>
+                      </label>
+                      <label>
+                        <span className="label">Year</span>
+                        <input type="number" min="2000" max="2100" className="input" value={row.year} onChange={(event) => updateBulkRow(row.id, 'year', Number(event.target.value))} />
+                      </label>
+                      <label>
+                        <span className="label">Month</span>
+                        <select className="input" value={row.month} onChange={(event) => updateBulkRow(row.id, 'month', event.target.value)}>
+                          {PAPER_MONTHS.map((month) => <option key={month}>{month}</option>)}
+                        </select>
+                      </label>
+                      <label>
+                        <span className="label">Source</span>
+                        <input className="input" value={row.source} onChange={(event) => updateBulkRow(row.id, 'source', event.target.value)} />
+                      </label>
+                      <label className="md:col-span-2">
+                        <span className="label">Source website</span>
+                        <input className="input" value={row.sourceWebsite} placeholder="https://..." onChange={(event) => updateBulkRow(row.id, 'sourceWebsite', event.target.value)} />
+                      </label>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <button type="button" className="btn-primary" disabled={savingRows[row.id] || row.saveState === 'saved'} onClick={() => handleSaveBulkRow(row.id)}>
+                        {savingRows[row.id] ? 'Saving...' : row.saveState === 'saved' ? 'Saved' : 'Save this paper'}
+                      </button>
+                      <button type="button" className="btn-secondary" onClick={() => handleRemoveBulkRow(row.id)}>
+                        Remove from list
+                      </button>
+                    </div>
+                    {row.saveMessage ? <p className="mt-2 text-sm text-slate-600">{row.saveMessage}</p> : null}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">No bulk papers loaded yet.</p>
+            )}
+          </div>
+        </div>
+
         {isTutor ? (
           <div className="panel grid gap-4 p-6 md:grid-cols-2 xl:grid-cols-5">
             <div className="md:col-span-2 xl:col-span-5">
               <h3 className="text-xl font-semibold text-slate-950">Tutor AI paper search</h3>
-              <p className="mt-2 text-sm text-slate-500">Searches reliable websites through AI, excludes existing Firestore papers, stores results in a temporary draft, and lets you confirm before final save (max 20).</p>
+              <p className="mt-2 text-sm text-slate-500">Temporarily moved to the bottom while manual bulk uploading is prioritised.</p>
             </div>
             <label>
               <span className="label">Subject</span>
@@ -296,95 +512,6 @@ export const PastExamPapersPage = () => {
             </div>
           </div>
         ) : null}
-
-        <div className="grid gap-6 xl:grid-cols-[1fr_0.95fr]">
-          <div className="space-y-4">
-            {papers.map((paper) => (
-              <div key={paper.id} className="panel p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-lg font-semibold text-slate-950">{paper.subject} • {paper.grade} {paper.paperNumber ? `• ${paper.paperNumber}` : ''}</h3>
-                    <p className="mt-1 text-sm text-slate-500">{paper.region || paper.province} • {paper.month} {paper.year} {paper.curriculum ? `• ${paper.curriculum}` : ''}</p>
-                  </div>
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.25em] text-slate-600">{paper.region || paper.province}</span>
-                </div>
-                <div className="mt-4 flex flex-wrap gap-3 text-sm">
-                  <a className="btn-secondary" href={paper.paperUrl} target="_blank" rel="noreferrer">Open paper</a>
-                  {paper.memoUrl ? <a className="btn-secondary" href={paper.memoUrl} target="_blank" rel="noreferrer">Open memo</a> : <span className="rounded-full bg-slate-50 px-3 py-2 text-slate-500">No memo uploaded</span>}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <form onSubmit={handleSubmit} className="panel grid gap-4 p-6 md:grid-cols-2">
-            <div className="md:col-span-2">
-              <h3 className="text-xl font-semibold text-slate-950">Add past exam paper</h3>
-              <p className="mt-2 text-sm text-slate-500">All users can upload papers. The app checks for duplicates before saving.</p>
-            </div>
-            <label>
-              <span className="label">Region</span>
-              <select className="input" value={form.region} onChange={handleChange('region')}>
-                {REGIONS.map((region) => <option key={region}>{region}</option>)}
-              </select>
-            </label>
-            <label>
-              <span className="label">Subject</span>
-              <input className="input" value={form.subject} onChange={handleChange('subject')} />
-            </label>
-            <label>
-              <span className="label">Curriculum</span>
-              <select className="input" value={form.curriculum} onChange={handleChange('curriculum')}>
-                {CURRICULUMS.map((item) => <option key={item}>{item}</option>)}
-              </select>
-            </label>
-            <label>
-              <span className="label">Paper Number</span>
-              <select className="input" value={form.paperNumber} onChange={handleChange('paperNumber')}>
-                {PAPER_NUMBERS.map((item) => <option key={item}>{item}</option>)}
-              </select>
-            </label>
-            <label>
-              <span className="label">Grade</span>
-              <select className="input" value={form.grade} onChange={handleChange('grade')}>
-                {SOUTH_AFRICAN_GRADES.map((grade) => <option key={grade}>{grade}</option>)}
-              </select>
-            </label>
-            <label>
-              <span className="label">Year</span>
-              <input type="number" className="input" value={form.year} onChange={handleChange('year')} min="2000" max="2100" />
-            </label>
-            <label>
-              <span className="label">Month</span>
-              <select className="input" value={form.month} onChange={handleChange('month')}>
-                {PAPER_MONTHS.map((month) => <option key={month}>{month}</option>)}
-              </select>
-            </label>
-            <label>
-              <span className="label">Source</span>
-              <input className="input" value={form.source} onChange={handleChange('source')} placeholder="Department of Basic Education" />
-            </label>
-            <label className="md:col-span-2">
-              <span className="label">Source website</span>
-              <input className="input" value={form.sourceWebsite} onChange={handleChange('sourceWebsite')} placeholder="https://..." />
-            </label>
-            <label className="md:col-span-2">
-              <span className="label">Actual paper document</span>
-              <input type="file" className="input" onChange={handleChange('paperFile')} accept=".pdf,.doc,.docx,image/*" required />
-            </label>
-            <label className="md:col-span-2">
-              <span className="label">Memorandum document (optional)</span>
-              <input type="file" className="input" onChange={handleChange('memoFile')} accept=".pdf,.doc,.docx,image/*" />
-            </label>
-            <label className="md:col-span-2">
-              <span className="label">Notes</span>
-              <textarea className="input min-h-28" value={form.notes} onChange={handleChange('notes')} />
-            </label>
-            <div className="md:col-span-2">
-              <button type="submit" className="btn-primary w-full">Save past paper</button>
-              {status ? <p className="mt-3 text-sm text-slate-600">{status}</p> : null}
-            </div>
-          </form>
-        </div>
       </div>
     </AppShell>
   );

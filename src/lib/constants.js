@@ -22,7 +22,7 @@ export const SOUTH_AFRICAN_GRADES = [
 
 export const PAPER_MONTHS = ['March', 'June', 'September', 'December'];
 export const CURRICULUMS = ['CAPS', 'IEB'];
-export const PAPER_NUMBERS = ['P1', 'P2', 'P3'];
+export const PAPER_NUMBERS = ['P1', 'P2', 'P3', 'Non'];
 
 export const REGIONS = [
   'National',
