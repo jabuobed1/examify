@@ -75,6 +75,55 @@ const detectMonthFromText = (text = '') => {
   return PAPER_MONTHS.find((month) => normalizedText.includes(month.toLowerCase())) || PAPER_MONTHS[0];
 };
 
+const detectDocumentTypeFromText = (text = '') => {
+  const normalizedText = normalizeName(text);
+  const memoIndicators = [
+    'memo',
+    'memorandum',
+    'marking guideline',
+    'marking guide',
+    'mark scheme',
+    'solutions',
+    'answer guide',
+    'answers',
+  ];
+  return memoIndicators.some((indicator) => normalizedText.includes(indicator)) ? 'memo' : 'paper';
+};
+
+const toBulkMatchKey = (item = {}) => [
+  String(item.subject || SUBJECT).toLowerCase(),
+  String(item.curriculum || '').toUpperCase(),
+  String(item.grade || '').toLowerCase(),
+  String(item.province || item.region || '').toLowerCase(),
+  String(item.paperNumber || '').toUpperCase(),
+  String(item.month || '').toLowerCase(),
+  Number(item.year || 0),
+].join('|');
+
+const linkMemosToPapers = (rows = []) => {
+  const baseRows = rows.map((row) => ({ ...row, linkedMemoRowId: '', linkedPaperRowId: '' }));
+  const paperRows = baseRows.filter((row) => row.documentType === 'paper');
+
+  return baseRows.map((row) => {
+    if (row.documentType !== 'memo') return row;
+
+    const exactMatch = paperRows.find((paper) => toBulkMatchKey(paper) === toBulkMatchKey(row) && !paper.linkedMemoRowId);
+    const relaxedMatch = paperRows.find(
+      (paper) =>
+        Number(paper.year) === Number(row.year)
+        && String(paper.grade) === String(row.grade)
+        && String(paper.paperNumber) === String(row.paperNumber)
+        && String(paper.month) === String(row.month)
+        && !paper.linkedMemoRowId,
+    );
+    const linkedPaper = exactMatch || relaxedMatch;
+    if (!linkedPaper) return row;
+
+    linkedPaper.linkedMemoRowId = row.id;
+    return { ...row, linkedPaperRowId: linkedPaper.id };
+  });
+};
+
 const extractBulkPaperMetadata = (file) => {
   const baseName = String(file?.name || '').replace(/\.[^/.]+$/, '');
   const province = detectProvinceFromText(baseName);
@@ -91,6 +140,7 @@ const extractBulkPaperMetadata = (file) => {
     source: 'Manual Upload',
     sourceWebsite: '',
     notes: '',
+    documentType: detectDocumentTypeFromText(baseName),
   };
 };
 
@@ -150,7 +200,7 @@ export const PastExamPapersPage = () => {
   };
 
   const updateBulkRow = (rowId, key, value) => {
-    setBulkRows((current) => current.map((row) => (row.id === rowId ? { ...row, [key]: value } : row)));
+    setBulkRows((current) => linkMemosToPapers(current.map((row) => (row.id === rowId ? { ...row, [key]: value } : row))));
   };
 
   const markBulkRowState = (rowId, payload = {}) => {
@@ -168,22 +218,28 @@ export const PastExamPapersPage = () => {
       id: `${Date.now()}-${index}-${file.name}`,
       file,
       fileName: file.name,
+      previewUrl: URL.createObjectURL(file),
       saveState: 'pending',
       saveMessage: '',
       ...extractBulkPaperMetadata(file),
     }));
 
-    setBulkRows((current) => [...newRows, ...current]);
-    setStatus(`${files.length} paper(s) loaded. Review fields and save individually or in bulk.`);
+    setBulkRows((current) => linkMemosToPapers([...newRows, ...current]));
+    setStatus(`${files.length} document(s) loaded. Review extracted fields and memo links before saving.`);
     event.target.value = '';
   };
 
   const persistBulkRow = async (row) => {
     if (!row?.file) throw new Error('No paper file found for this row.');
+    if (row.documentType !== 'paper') throw new Error('Only question papers can be saved. Link memorandum rows to a paper first.');
+
+    const linkedMemoRow = row.linkedMemoRowId
+      ? bulkRows.find((item) => item.id === row.linkedMemoRowId)
+      : null;
 
     const uploads = await uploadQuestionPaperDocuments({
       paperFile: row.file,
-      memoFile: null,
+      memoFile: linkedMemoRow?.file || null,
       uploaderId: profile?.uid ?? 'anonymous',
     });
 
@@ -200,9 +256,9 @@ export const PastExamPapersPage = () => {
       source: row.source,
       sourceWebsite: row.sourceWebsite,
       paperUrl: uploads.paperUrl,
-      memoUrl: '',
+      memoUrl: uploads.memoUrl,
       paperFileName: uploads.paperFileName,
-      memoFileName: '',
+      memoFileName: uploads.memoFileName,
       createdBy: profile?.uid ?? 'unknown',
     });
 
@@ -212,6 +268,10 @@ export const PastExamPapersPage = () => {
   const handleSaveBulkRow = async (rowId) => {
     const row = bulkRows.find((item) => item.id === rowId);
     if (!row || row.saveState === 'saved') return false;
+    if (row.documentType !== 'paper') {
+      setStatus('Memorandum rows cannot be saved directly. Link each memo to a question paper.');
+      return false;
+    }
 
     setSavingRows((current) => ({ ...current, [rowId]: true }));
     markBulkRowState(rowId, { saveState: 'saving', saveMessage: 'Saving...' });
@@ -220,6 +280,9 @@ export const PastExamPapersPage = () => {
       const saved = await persistBulkRow(row);
       setPapers((current) => [saved, ...current]);
       markBulkRowState(rowId, { saveState: 'saved', saveMessage: 'Saved successfully.' });
+      if (row.linkedMemoRowId) {
+        markBulkRowState(row.linkedMemoRowId, { saveState: 'linked', saveMessage: `Linked to ${row.fileName}.` });
+      }
       setStatus('Paper saved successfully.');
       return true;
     } catch (error) {
@@ -232,14 +295,15 @@ export const PastExamPapersPage = () => {
   };
 
   const handleSaveAllBulkRows = async () => {
-    const pendingRows = bulkRows.filter((row) => row.saveState !== 'saved');
+    const pendingRows = bulkRows.filter((row) => row.documentType === 'paper' && row.saveState !== 'saved');
+    const orphanMemoCount = bulkRows.filter((row) => row.documentType === 'memo' && !row.linkedPaperRowId).length;
     if (!pendingRows.length) {
-      setStatus('All loaded papers are already saved.');
+      setStatus('All loaded question papers are already saved.');
       return;
     }
 
     setBulkSaving(true);
-    setStatus(`Saving ${pendingRows.length} paper(s)...`);
+    setStatus(`Saving ${pendingRows.length} paper(s)...${orphanMemoCount ? ` ${orphanMemoCount} memo(s) still need matching papers.` : ''}`);
 
     let successCount = 0;
     for (const row of pendingRows) {
@@ -247,12 +311,42 @@ export const PastExamPapersPage = () => {
       if (wasSaved) successCount += 1;
     }
 
-    setStatus(`Bulk save completed. ${successCount} of ${pendingRows.length} paper(s) saved.`);
+    setStatus(`Bulk save completed. ${successCount} of ${pendingRows.length} paper(s) saved.${orphanMemoCount ? ` ${orphanMemoCount} orphan memo(s) were not saved.` : ''}`);
     setBulkSaving(false);
   };
 
   const handleRemoveBulkRow = (rowId) => {
-    setBulkRows((current) => current.filter((row) => row.id !== rowId));
+    const rowToRemove = bulkRows.find((row) => row.id === rowId);
+    if (rowToRemove?.previewUrl) {
+      URL.revokeObjectURL(rowToRemove.previewUrl);
+    }
+    setBulkRows((current) => linkMemosToPapers(current.filter((row) => row.id !== rowId)));
+  };
+
+  const handleMemoLinkChange = (memoRowId, paperRowId) => {
+    setBulkRows((current) => {
+      const withoutExistingLink = current.map((row) => {
+        if (row.documentType === 'paper' && row.linkedMemoRowId === memoRowId) {
+          return { ...row, linkedMemoRowId: '' };
+        }
+        if (row.id === memoRowId) {
+          return { ...row, linkedPaperRowId: '' };
+        }
+        return row;
+      });
+
+      if (!paperRowId) return withoutExistingLink;
+
+      return withoutExistingLink.map((row) => {
+        if (row.id === memoRowId) {
+          return { ...row, linkedPaperRowId: paperRowId, saveState: 'pending', saveMessage: '' };
+        }
+        if (row.id === paperRowId) {
+          return { ...row, linkedMemoRowId: memoRowId, saveState: row.saveState === 'saved' ? 'saved' : 'pending' };
+        }
+        return row;
+      });
+    });
   };
 
   const handleAiSearch = async () => {
@@ -352,18 +446,22 @@ export const PastExamPapersPage = () => {
             ))}
           </div>
 
+          {isTutor ? (
           <div className="panel space-y-4 p-6">
             <div>
               <h3 className="text-xl font-semibold text-slate-950">Bulk upload past exam papers</h3>
-              <p className="mt-2 text-sm text-slate-500">Upload multiple paper files once. Examify extracts fields locally from each filename, lets you edit, then save one-by-one or all together.</p>
+              <p className="mt-2 text-sm text-slate-500">Upload mixed papers and memorandums. Examify extracts fields, detects memo documents, and helps you confirm memo-paper links before saving.</p>
             </div>
             <label>
               <span className="label">Paper documents (multiple)</span>
-              <input type="file" multiple className="input" accept=".pdf,.doc,.docx,image/*" onChange={handleBulkFilesChange} />
+              <input id="bulk-paper-input" type="file" multiple className="input" accept=".pdf,.doc,.docx,image/*" onChange={handleBulkFilesChange} />
             </label>
             <div className="flex flex-wrap gap-3">
-              <button type="button" className="btn-primary" onClick={handleSaveAllBulkRows} disabled={bulkSaving || !bulkRows.length}>
+              <button type="button" className="btn-primary" onClick={handleSaveAllBulkRows} disabled={bulkSaving || !bulkRows.some((row) => row.documentType === 'paper')}>
                 {bulkSaving ? 'Saving all...' : 'Save all loaded papers'}
+              </button>
+              <button type="button" className="btn-secondary" onClick={() => setBulkRows((current) => linkMemosToPapers(current))} disabled={!bulkRows.length}>
+                Re-check memo links
               </button>
             </div>
             {status ? <p className="text-sm text-slate-600">{status}</p> : null}
@@ -375,9 +473,10 @@ export const PastExamPapersPage = () => {
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <p className="text-sm font-semibold text-slate-900">{row.fileName}</p>
                       <span className={`rounded-full px-3 py-1 text-xs font-semibold ${row.saveState === 'saved' ? 'bg-emerald-100 text-emerald-700' : row.saveState === 'error' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-700'}`}>
-                        {row.saveState === 'saved' ? 'Saved' : row.saveState === 'error' ? 'Error' : 'Pending'}
+                        {row.documentType === 'memo' && !row.linkedPaperRowId ? 'Memo needs paper' : row.saveState === 'saved' ? 'Saved' : row.saveState === 'error' ? 'Error' : row.saveState === 'linked' ? 'Linked' : 'Pending'}
                       </span>
                     </div>
+                    <p className="mt-2 text-xs text-slate-500">Type: <strong className="text-slate-700">{row.documentType === 'memo' ? 'Memorandum' : 'Question paper'}</strong></p>
                     <div className="mt-3 grid gap-3 md:grid-cols-2">
                       <label>
                         <span className="label">Grade</span>
@@ -425,16 +524,44 @@ export const PastExamPapersPage = () => {
                         <span className="label">Source website</span>
                         <input className="input" value={row.sourceWebsite} placeholder="https://..." onChange={(event) => updateBulkRow(row.id, 'sourceWebsite', event.target.value)} />
                       </label>
+                      {row.documentType === 'memo' ? (
+                        <label className="md:col-span-2">
+                          <span className="label">Linked question paper</span>
+                          <select className="input" value={row.linkedPaperRowId || ''} onChange={(event) => handleMemoLinkChange(row.id, event.target.value)}>
+                            <option value="">No linked paper yet</option>
+                            {bulkRows.filter((item) => item.documentType === 'paper').map((paperRow) => (
+                              <option key={paperRow.id} value={paperRow.id}>
+                                {paperRow.fileName}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : (
+                        <div className="md:col-span-2 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+                          {row.linkedMemoRowId
+                            ? `Linked memo: ${bulkRows.find((item) => item.id === row.linkedMemoRowId)?.fileName || 'Memo selected'}`
+                            : 'No memo linked (optional).'}
+                        </div>
+                      )}
                     </div>
                     <div className="mt-4 flex flex-wrap gap-3">
-                      <button type="button" className="btn-primary" disabled={savingRows[row.id] || row.saveState === 'saved'} onClick={() => handleSaveBulkRow(row.id)}>
+                      <button type="button" className="btn-primary" disabled={row.documentType !== 'paper' || savingRows[row.id] || row.saveState === 'saved'} onClick={() => handleSaveBulkRow(row.id)}>
                         {savingRows[row.id] ? 'Saving...' : row.saveState === 'saved' ? 'Saved' : 'Save this paper'}
                       </button>
+                      <a className="btn-secondary" href={row.previewUrl} target="_blank" rel="noreferrer">
+                        Open {row.documentType === 'memo' ? 'memo' : 'paper'}
+                      </a>
+                      {row.documentType === 'memo' && !row.linkedPaperRowId ? (
+                        <button type="button" className="btn-secondary" onClick={() => document.getElementById('bulk-paper-input')?.click()}>
+                          Upload matching past paper
+                        </button>
+                      ) : null}
                       <button type="button" className="btn-secondary" onClick={() => handleRemoveBulkRow(row.id)}>
                         Remove from list
                       </button>
                     </div>
                     {row.saveMessage ? <p className="mt-2 text-sm text-slate-600">{row.saveMessage}</p> : null}
+                    {row.documentType === 'memo' && !row.linkedPaperRowId ? <p className="mt-2 text-sm text-amber-700">This memorandum cannot be saved until a matching question paper is linked.</p> : null}
                   </div>
                 ))}
               </div>
@@ -442,6 +569,12 @@ export const PastExamPapersPage = () => {
               <p className="text-sm text-slate-500">No bulk papers loaded yet.</p>
             )}
           </div>
+          ) : (
+            <div className="panel p-6">
+              <h3 className="text-xl font-semibold text-slate-950">Tutor upload only</h3>
+              <p className="mt-2 text-sm text-slate-500">Only tutors can upload past papers. Students and parents can still browse and open all available papers and memorandums.</p>
+            </div>
+          )}
         </div>
 
         {isTutor ? (
