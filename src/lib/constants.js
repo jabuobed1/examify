@@ -174,9 +174,6 @@ export const buildAssessmentQuestionsForGrade = (grade) => {
 };
 
 export const getRecommendedSessionsFromAssessment = (percentage) => {
-  if (percentage >= 85) return 4;
-  if (percentage >= 70) return 6;
-  if (percentage >= 50) return 8;
-  if (percentage >= 35) return 10;
-  return 12;
+  if (Number(percentage) < 70) return 4;
+  return 2;
 };

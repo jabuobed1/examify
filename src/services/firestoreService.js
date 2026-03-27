@@ -1769,6 +1769,84 @@ export const getAssessmentForParentStudent = async ({ parentId, studentId, asses
   return getAssessmentForStudent({ studentId, assessmentId });
 };
 
+export const acceptAssessmentRecommendation = async ({
+  studentId,
+  assessmentId,
+  acceptedByUserId,
+  acceptedByRole = 'student',
+  parentId = null,
+}) => {
+  if (!studentId || !assessmentId) {
+    throw new Error('studentId and assessmentId are required.');
+  }
+
+  if (acceptedByRole === 'student' && acceptedByUserId && acceptedByUserId !== studentId) {
+    throw new Error('Unauthorized: students can only accept recommendations for their own profile.');
+  }
+
+  if (acceptedByRole === 'parent' && parentId) {
+    await getParentStudentById({ parentId, studentId });
+  }
+
+  const assessment = await getAssessmentForStudent({ studentId, assessmentId });
+  if (!assessment) {
+    throw new Error('Assessment not found.');
+  }
+
+  const acceptedMark = Number(assessment.percentage ?? 0);
+  const recommendedSessions = Number(assessment.recommendedSessions ?? 0);
+
+  if (!isFirebaseConfigured) {
+    const student = demoUsers.find((user) => user.uid === studentId && user.role === 'student');
+    if (!student) throw new Error('Student not found.');
+
+    student.latestMark = acceptedMark;
+    student.assessmentScore = acceptedMark;
+    student.recommendedSessions = recommendedSessions;
+    student.acceptedAssessmentId = assessmentId;
+    student.acceptedAssessmentAt = new Date().toISOString();
+
+    return {
+      success: true,
+      studentId,
+      assessmentId,
+      latestMark: acceptedMark,
+      recommendedSessions,
+    };
+  }
+
+  ensureDb();
+
+  await updateDoc(doc(db, collections.users, studentId), {
+    latestMark: acceptedMark,
+    assessmentScore: acceptedMark,
+    recommendedSessions,
+    acceptedAssessmentId: assessmentId,
+    acceptedAssessmentAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  await setDoc(
+    doc(db, collections.assessments, assessmentId),
+    {
+      recommendationAccepted: true,
+      recommendationAcceptedByRole: acceptedByRole,
+      recommendationAcceptedBy: acceptedByUserId || null,
+      recommendationAcceptedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+
+  return {
+    success: true,
+    studentId,
+    assessmentId,
+    latestMark: acceptedMark,
+    recommendedSessions,
+  };
+};
+
 export const getParentStudentById = async ({ parentId, studentId }) => {
   if (!studentId) return null;
 
