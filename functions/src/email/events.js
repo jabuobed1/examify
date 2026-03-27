@@ -20,6 +20,16 @@ const normalizeName = (profile) => profile?.displayName || profile?.name || prof
 
 const getAppUrl = () => getResendConfig().resendAppUrl || null;
 
+const buildAssessmentResultsUrl = ({ relation, appUrl, assessmentId, studentId }) => {
+  if (!appUrl || !assessmentId) return appUrl;
+  const baseUrl = appUrl.endsWith('/') ? appUrl.slice(0, -1) : appUrl;
+
+  if (relation === 'student') return `${baseUrl}/student/assessment/${assessmentId}`;
+  if (relation === 'tutor' && studentId) return `${baseUrl}/tutor/student/${studentId}/assessment/${assessmentId}`;
+  if (relation === 'parent' && studentId) return `${baseUrl}/parent/student/${studentId}/assessment/${assessmentId}`;
+  return baseUrl;
+};
+
 export const sendWelcomeEmail = async ({ userId, email, role, displayName }) =>
   withEmailDedupe({
     key: `welcome:user:${userId}`,
@@ -292,6 +302,7 @@ export const sendAssessmentOutcomeEmail = async ({
   }
 
   const studentName = normalizeName(studentProfile);
+  const appUrl = getAppUrl();
 
   const jobs = uniqueRecipients.map((recipient) =>
     withEmailDedupe({
@@ -309,7 +320,13 @@ export const sendAssessmentOutcomeEmail = async ({
           recommendedSessions,
           assessmentDate,
           questionResults,
-          appUrl: getAppUrl(),
+          appUrl,
+          resultsUrl: buildAssessmentResultsUrl({
+            relation: recipient.relation,
+            appUrl,
+            assessmentId,
+            studentId,
+          }),
         });
 
         return sendEmail({

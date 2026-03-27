@@ -80,6 +80,15 @@ const getLocalDateISO = (value = new Date()) => [
   String(value.getDate()).padStart(2, '0'),
 ].join('-');
 
+const toComparableTimestamp = (value) => {
+  if (!value) return 0;
+  if (typeof value?.toMillis === 'function') return value.toMillis();
+  if (typeof value?.toDate === 'function') return value.toDate().getTime();
+  const date = new Date(value);
+  const millis = date.getTime();
+  return Number.isFinite(millis) ? millis : 0;
+};
+
 const buildStudentGenerationStatus = ({
   latestReport,
   availablePapers,
@@ -1672,6 +1681,92 @@ export const saveAssessmentResult = async ({
   });
 
   return { id: ref.id, ...payload };
+};
+
+const sortAssessmentsNewestFirst = (items = []) =>
+  [...items].sort((left, right) => {
+    const rightTime = Math.max(
+      toComparableTimestamp(right.createdAt),
+      toComparableTimestamp(right.updatedAt),
+      toComparableTimestamp(right.assessmentDate),
+    );
+    const leftTime = Math.max(
+      toComparableTimestamp(left.createdAt),
+      toComparableTimestamp(left.updatedAt),
+      toComparableTimestamp(left.assessmentDate),
+    );
+    return rightTime - leftTime;
+  });
+
+export const getLatestAssessmentForStudent = async (studentId) => {
+  if (!studentId) return null;
+
+  if (!isFirebaseConfigured) {
+    const student = demoUsers.find((user) => user.uid === studentId);
+    if (!student?.assessmentDate) return null;
+    return {
+      id: `mock-assessment-${student.uid}`,
+      studentId: student.uid,
+      studentName: student.displayName || student.email || 'Student',
+      tutorId: student.tutorId || null,
+      grade: student.grade || '',
+      subject: SUBJECT,
+      score: Number(student.assessmentScore ?? 0),
+      totalQuestions: 15,
+      percentage: Number(student.assessmentScore ?? 0),
+      recommendedSessions: Number(student.recommendedSessions ?? 1),
+      questionResults: [],
+      assessmentDate: student.assessmentDate,
+      createdAt: student.assessmentDate,
+    };
+  }
+
+  ensureDb();
+  const snapshot = await getDocs(
+    query(
+      collection(db, collections.assessments),
+      where('studentId', '==', studentId),
+      limit(30),
+    ),
+  );
+  const rows = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+  return sortAssessmentsNewestFirst(rows)[0] ?? null;
+};
+
+export const getAssessmentById = async (assessmentId) => {
+  if (!assessmentId) return null;
+
+  if (!isFirebaseConfigured) {
+    return null;
+  }
+
+  ensureDb();
+  const snapshot = await getDoc(doc(db, collections.assessments, assessmentId));
+  return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
+};
+
+export const getAssessmentForStudent = async ({ studentId, assessmentId }) => {
+  const assessment = assessmentId
+    ? await getAssessmentById(assessmentId)
+    : await getLatestAssessmentForStudent(studentId);
+
+  if (!assessment) return null;
+  if (assessment.studentId !== studentId) {
+    throw new Error('Unauthorized assessment access.');
+  }
+  return assessment;
+};
+
+export const getAssessmentForTutorStudent = async ({ tutorId, studentId, assessmentId }) => {
+  const student = await getTutorStudentById({ tutorId, studentId });
+  if (!student) return null;
+  return getAssessmentForStudent({ studentId, assessmentId });
+};
+
+export const getAssessmentForParentStudent = async ({ parentId, studentId, assessmentId }) => {
+  const student = await getParentStudentById({ parentId, studentId });
+  if (!student) return null;
+  return getAssessmentForStudent({ studentId, assessmentId });
 };
 
 export const getParentStudentById = async ({ parentId, studentId }) => {
