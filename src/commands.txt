@@ -7,7 +7,7 @@ After editing in Codespaces and Before asking Codex
 
 git status
 git add .
-git commit -m "Fixed some bugs with email sending and the added assessment and AI generation. 27-03-2026-4."
+git commit -m "Commit after deploy. 27-03-2026-4."
 git push origin main
 
 
