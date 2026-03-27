@@ -7,7 +7,7 @@ if (!admin.apps.length) {
 }
 
 let dbInstance = null;
-let firestoreDatabaseId = '(default)';
+let firestoreDatabaseId = 'tutoring';
 
 export const getDb = () => {
   if (dbInstance) return dbInstance;
@@ -15,10 +15,7 @@ export const getDb = () => {
   const appConfig = getAppConfig();
   firestoreDatabaseId = appConfig.firestoreDatabaseId;
 
-  dbInstance =
-    firestoreDatabaseId === '(default)'
-      ? getFirestore()
-      : getFirestore(firestoreDatabaseId);
+  dbInstance = firestoreDatabaseId === '(default)' ? getFirestore() : getFirestore(firestoreDatabaseId);
 
   return dbInstance;
 };

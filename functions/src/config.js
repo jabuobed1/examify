@@ -19,7 +19,7 @@ export const getAppConfig = () => {
   const config = appConfigSecret.value() ?? {};
 
   return {
-    firestoreDatabaseId: config.firestoreDatabaseId?.trim() || '(default)',
+    firestoreDatabaseId: config.firestoreDatabaseId?.trim() || 'tutoring',
   };
 };
 

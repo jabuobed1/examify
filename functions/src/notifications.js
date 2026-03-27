@@ -8,6 +8,7 @@ import {
 
 const triggerOptions = {
   secrets: [appConfigSecret, resendConfigSecret],
+  database: 'tutoring',
 };
 
 export const onUserCreatedSendWelcomeEmail = onDocumentCreated(
