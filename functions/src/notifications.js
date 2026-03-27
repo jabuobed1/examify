@@ -4,6 +4,7 @@ import { appConfigSecret, resendConfigSecret } from './config.js';
 import {
   sendSubmissionAndPeerMarkEmail,
   sendWelcomeEmail,
+  sendAssessmentOutcomeEmail,
 } from './email/events.js';
 
 const triggerOptions = {
@@ -78,6 +79,42 @@ export const onAssignmentCompletedSendSubmissionPeerMarkEmail = onDocumentUpdate
       logger.error('Submission+peer mark email failed', {
         assignmentId,
         studentId: after.studentId,
+        error: error?.message ?? String(error),
+      });
+    }
+  },
+);
+
+
+export const onAssessmentCompletedSendOutcomeEmail = onDocumentCreated(
+  {
+    ...triggerOptions,
+    document: 'assessments/{assessmentId}',
+  },
+  async (event) => {
+    const data = event.data?.data() ?? {};
+    const assessmentId = event.params.assessmentId;
+
+    if (!data.studentId) {
+      logger.warn('Assessment outcome email skipped: missing studentId', { assessmentId });
+      return;
+    }
+
+    try {
+      await sendAssessmentOutcomeEmail({
+        assessmentId,
+        studentId: data.studentId,
+        percentage: Number(data.percentage ?? 0),
+        score: Number(data.score ?? 0),
+        totalQuestions: Number(data.totalQuestions ?? 0),
+        recommendedSessions: Number(data.recommendedSessions ?? 0),
+        assessmentDate: data.assessmentDate || new Date().toISOString().slice(0, 10),
+        questionResults: Array.isArray(data.questionResults) ? data.questionResults : [],
+      });
+    } catch (error) {
+      logger.error('Assessment outcome email failed', {
+        assessmentId,
+        studentId: data.studentId,
         error: error?.message ?? String(error),
       });
     }

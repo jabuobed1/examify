@@ -171,7 +171,7 @@ export const buildPaymentSuccessTemplate = ({ recipientName, studentName, amount
   return { subject, html, text };
 };
 
-export const buildSubmissionPeerMarkTemplate = ({ recipientName, assignmentTitle, appUrl }) => {
+export const buildSubmissionPeerMarkTemplate = ({ recipientName, assignmentTitle, appUrl, studentName = null, relation = 'student' }) => {
   const subject = 'Excellent work — submission and peer marking complete';
 
   const html = buildEmailLayout({
@@ -179,7 +179,9 @@ export const buildSubmissionPeerMarkTemplate = ({ recipientName, assignmentTitle
     title: 'Great Progress Today ✅',
     greeting: `Hi ${recipientName || 'there'},`,
     body: createBodyParagraphs([
-      'Well done. You have successfully submitted your work and completed peer marking for another student.',
+      relation === 'parent'
+        ? `Great update: ${studentName || 'your student'} has successfully submitted work and completed peer marking for another student.`
+        : 'Well done. You have successfully submitted your work and completed peer marking for another student.',
       assignmentTitle ? `Completed exercise: ${assignmentTitle}.` : null,
       'Consistency like this is exactly how strong Maths confidence is built over time.',
     ]),
@@ -191,7 +193,9 @@ export const buildSubmissionPeerMarkTemplate = ({ recipientName, assignmentTitle
   const text = [
     `Hi ${recipientName || 'there'},`,
     '',
-    'You completed today’s submission and peer marking successfully.',
+    relation === 'parent'
+      ? `${studentName || 'Your student'} completed today’s submission and peer marking successfully.`
+      : 'You completed today’s submission and peer marking successfully.',
     assignmentTitle ? `Exercise: ${assignmentTitle}` : null,
     appUrl ? `Open Examify: ${appUrl}` : null,
     '',
@@ -201,6 +205,53 @@ export const buildSubmissionPeerMarkTemplate = ({ recipientName, assignmentTitle
     .join('\n');
 
   return { subject, html, text };
+};
+
+
+export const buildAssessmentOutcomeTemplate = ({ recipientName, studentName, relation = 'student', percentage, score, totalQuestions, recommendedSessions, assessmentDate, questionResults = [], appUrl }) => {
+  const subject = 'Assessment outcome available — Examify Maths';
+
+  const questionListHtml = questionResults.slice(0, 15).map((item, index) => {
+    const isCorrect = item?.selectedOptionId && item?.selectedOptionId === item?.correctOptionId;
+    return `<li style="margin-bottom:10px;"><strong>Q${index + 1}:</strong> ${escapeHtml(item?.prompt || 'Question')}<br/><span style="color:${isCorrect ? '#166534' : '#991b1b'};">Selected: ${escapeHtml(item?.selectedOptionText || 'No answer')}</span><br/>Correct: ${escapeHtml(item?.correctOptionText || 'N/A')}</li>`;
+  }).join('');
+
+  const html = buildEmailLayout({
+    preheader: 'Assessment score and recommended sessions are ready.',
+    title: 'Assessment Outcome Ready',
+    greeting: `Hi ${recipientName || 'there'},`,
+    body: createBodyParagraphs([
+      relation === 'parent'
+        ? `Here is the latest assessment result for ${studentName || 'your student'}.`
+        : 'Here is your latest assessment result.',
+      `Score: ${score}/${totalQuestions} (${percentage}%).`,
+      `Recommended sessions: ${recommendedSessions}.`,
+      `Assessment date: ${assessmentDate}.`,
+    ]) + `<div style="margin-top:14px;"><p style="font-size:14px;font-weight:700;color:${brandColors.textPrimary};margin-bottom:8px;">Questions and answers</p><ol style="padding-left:18px;margin:0;font-size:13px;color:${brandColors.textMuted};">${questionListHtml}</ol></div>`,
+    highlight: 'Use this outcome to plan the next lessons and focus areas.',
+    ctaLabel: appUrl ? 'Open Examify' : null,
+    ctaUrl: appUrl || null,
+  });
+
+  const textLines = [
+    `Hi ${recipientName || 'there'},`,
+    '',
+    relation === 'parent' ? `Assessment outcome for ${studentName || 'your student'}:` : 'Your assessment outcome:',
+    `Score: ${score}/${totalQuestions} (${percentage}%)`,
+    `Recommended sessions: ${recommendedSessions}`,
+    `Assessment date: ${assessmentDate}`,
+    '',
+    'Questions and answers:',
+    ...questionResults.slice(0, 15).map((item, index) => {
+      const isCorrect = item?.selectedOptionId && item?.selectedOptionId === item?.correctOptionId;
+      return `Q${index + 1}: ${item?.prompt || 'Question'} | Selected: ${item?.selectedOptionText || 'No answer'} | Correct: ${item?.correctOptionText || 'N/A'} | ${isCorrect ? 'Correct' : 'Incorrect'}`;
+    }),
+    appUrl ? `Open Examify: ${appUrl}` : null,
+    '',
+    '— Examify Team',
+  ].filter(Boolean);
+
+  return { subject, html, text: textLines.join('\n') };
 };
 
 export const buildAutoBillingFailedTemplate = ({ recipientName, studentName, reference, appUrl }) => {

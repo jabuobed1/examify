@@ -52,38 +52,43 @@ const normalizeRecommendations = (parsed, payload = {}) => {
     ? parsed.recommendations
     : [];
 
+  const allowedTopics = new Set((payload.completedTopics || []).map((topic) => String(topic).trim()).filter(Boolean));
+  const maxQuestions = Number(payload.maxQuestionsPerDay || 1);
+
   return {
-    recommendations: recommendations.map((item, index) => ({
-      title: item?.title || item?.questionReferences?.join(' | ') || `Recommendation ${index + 1}`,
-      topic: item?.topic || (
-        Array.isArray(item?.topicBreakdown)
-          ? item.topicBreakdown.map((entry) => entry?.topic).filter(Boolean).join(' | ')
-          : 'Mathematics topic'
-      ),
-      reason: item?.reason || 'No reason provided.',
-      sourceLabel: item?.sourceLabel || 'AI recommendation',
-      instruction: item?.instruction || item?.reason || 'Complete the referenced question(s).',
-      assignmentDate: item?.assignmentDate || payload.assignmentDates?.[index] || null,
-      questionReferences: Array.isArray(item?.questionReferences)
-        ? item.questionReferences.filter(Boolean)
-        : String(item?.title || '')
-          .split('|')
-          .map((part) => part.trim())
-          .filter(Boolean),
-      topicBreakdown: Array.isArray(item?.topicBreakdown)
+    recommendations: recommendations.map((item, index) => {
+      const normalizedBreakdown = Array.isArray(item?.topicBreakdown)
         ? item.topicBreakdown
             .map((entry) => ({
-              topic: entry?.topic || 'Mathematics topic',
-              questionReference: entry?.questionReference || entry?.reference || '',
+              topic: String(entry?.topic || '').trim(),
+              questionReference: String(entry?.questionReference || entry?.reference || '').trim(),
             }))
-            .filter((entry) => entry.questionReference)
-        : [],
-      paperIdsUsed: Array.isArray(item?.paperIdsUsed)
-        ? item.paperIdsUsed.filter(Boolean)
-        : Array.isArray(payload.selectedPaperIds)
-          ? payload.selectedPaperIds.slice(0, 2)
-          : [],
-    })),
+            .filter((entry) => entry.topic && entry.questionReference && allowedTopics.has(entry.topic))
+        : [];
+
+      const fallbackTopic = (payload.completedTopics || []).find(Boolean) || 'Mathematics topic';
+      const topicBreakdown = normalizedBreakdown.length
+        ? normalizedBreakdown.slice(0, maxQuestions)
+        : [{ topic: fallbackTopic, questionReference: '1.1' }];
+
+      const questionReferences = topicBreakdown.map((entry) => entry.questionReference).slice(0, maxQuestions);
+
+      return {
+        title: questionReferences.join(' | ') || item?.title || `Recommendation ${index + 1}`,
+        topic: topicBreakdown.map((entry) => entry.topic).join(' | '),
+        reason: item?.reason || 'No reason provided.',
+        sourceLabel: item?.sourceLabel || 'AI recommendation',
+        instruction: item?.instruction || item?.reason || 'Complete the referenced question(s).',
+        assignmentDate: item?.assignmentDate || payload.assignmentDates?.[index] || null,
+        questionReferences,
+        topicBreakdown,
+        paperIdsUsed: Array.isArray(item?.paperIdsUsed)
+          ? item.paperIdsUsed.filter(Boolean).slice(0, 2)
+          : Array.isArray(payload.selectedPaperIds)
+            ? payload.selectedPaperIds.slice(0, 2)
+            : [],
+      };
+    }),
     source: 'firebase-ai-logic',
   };
 };
@@ -164,7 +169,7 @@ Additional mandatory generation rules:
 - The title must be only the question reference numbers joined by " | " when there are multiple references.
 - Never use topic names in the title.
 - Return exactly one recommendation object per assignment date.
-- Each question reference must belong to a tutor-completed topic.
+- Each question reference must belong to a tutor-completed topic, and every topic in topicBreakdown MUST be one of Completed topics exactly (case-sensitive).
 - For initial mode, return exactly one question reference per covered topic for that day, without ranges like "1.1.3 - 1.1.5".
 - For weekly mode, never exceed the provided maximum question references per day.
 - For weekly mode, question references on the same day must come from different topics.

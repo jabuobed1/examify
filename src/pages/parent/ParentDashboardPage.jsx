@@ -329,6 +329,14 @@ export const ParentDashboardPage = () => {
                       Subscription Active
                     </button>
                   )}
+
+                  <button
+                    type="button"
+                    className="btn-secondary mt-3 w-full"
+                    onClick={() => navigate(`/parent/student/${student.uid}`)}
+                  >
+                    View More
+                  </button>
                 </div>
               </div>
             </div>
