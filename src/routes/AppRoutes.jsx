@@ -9,9 +9,11 @@ import { StudentExercisesPage } from '../pages/student/StudentExercisesPage';
 import { StudentPeerReviewsPage } from '../pages/student/StudentPeerReviewsPage';
 import { StudentBillingPage } from '../pages/student/StudentBillingPage';
 import { StudentProfilePage } from '../pages/student/StudentProfilePage';
+import { StudentLessonsPage } from '../pages/student/StudentLessonsPage';
 import { TutorDashboardPage } from '../pages/tutor/TutorDashboardPage';
 import { TutorStudentsPage } from '../pages/tutor/TutorStudentsPage';
 import { TutorReportsPage } from '../pages/tutor/TutorReportsPage';
+import { TutorStudentDetailPage } from '../pages/tutor/TutorStudentDetailPage';
 import { AdminDashboardPage } from '../pages/admin/AdminDashboardPage';
 import { AdminUsersPage } from '../pages/admin/AdminUsersPage';
 import { AdminPaymentsPage } from '../pages/admin/AdminPaymentsPage';
@@ -21,6 +23,7 @@ import { GuidePage } from '../pages/GuidePage';
 import { ROLES } from '../lib/constants';
 import { PoliciesPage } from '../pages/PoliciesPage';
 import { ParentDashboardPage } from '../pages/parent/ParentDashboardPage';
+import { ParentStudentDetailPage } from '../pages/parent/ParentStudentDetailPage';
 
 export const AppRoutes = () => (
   <Routes>
@@ -37,6 +40,7 @@ export const AppRoutes = () => (
       <Route path="/student/peer-reviews" element={<StudentPeerReviewsPage />} />
       <Route path="/student/billing" element={<StudentBillingPage />} />
       <Route path="/student/profile" element={<StudentProfilePage />} />
+      <Route path="/student/lessons" element={<StudentLessonsPage />} />
       <Route path="/student/papers" element={<PastExamPapersPage />} />
       <Route path="/student/guide" element={<GuidePage role="student" />} />
       <Route path="/policies" element={<PoliciesPage />} />
@@ -44,6 +48,7 @@ export const AppRoutes = () => (
 
     <Route element={<ProtectedRoute allowedRoles={[ROLES.PARENT]} />}>
       <Route path="/parent" element={<ParentDashboardPage />} />
+      <Route path="/parent/student/:studentId" element={<ParentStudentDetailPage />} />
       <Route path="/policies" element={<PoliciesPage />} />
     </Route>
 
@@ -52,6 +57,7 @@ export const AppRoutes = () => (
       <Route path="/tutor/students" element={<TutorStudentsPage />} />
       <Route path="/tutor/papers" element={<PastExamPapersPage />} />
       <Route path="/tutor/reports" element={<TutorReportsPage />} />
+      <Route path="/tutor/student/:studentId" element={<TutorStudentDetailPage />} />
       <Route path="/tutor/guide" element={<GuidePage role="tutor" />} />
       <Route path="/policies" element={<PoliciesPage />} />
     </Route>

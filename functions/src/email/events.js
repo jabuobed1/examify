@@ -7,6 +7,7 @@ import {
   buildPaymentSuccessTemplate,
   buildSubmissionPeerMarkTemplate,
   buildWelcomeEmailTemplate,
+  buildAssessmentOutcomeTemplate,
 } from './templates.js';
 
 const getUserProfile = async (uid) => {
@@ -117,24 +118,49 @@ export const sendSubmissionAndPeerMarkEmail = async ({ studentId, assignmentId, 
     return { skipped: true, reason: 'missing_student_email' };
   }
 
-  return withEmailDedupe({
-    key: `submission_peer_complete:${assignmentId}:${studentId}`,
-    eventType: 'submission_peer_mark_complete',
-    metadata: { studentId, assignmentId },
-    action: async () => {
-      const template = buildSubmissionPeerMarkTemplate({
-        recipientName: normalizeName(studentProfile),
-        assignmentTitle,
-        appUrl: getAppUrl(),
-      });
+  const recipients = [{
+    email: studentProfile.email,
+    name: normalizeName(studentProfile),
+    relation: 'student',
+  }];
 
-      return sendEmail({
-        to: studentProfile.email,
-        ...template,
-        tags: [{ name: 'event', value: 'submission_peer_mark_complete' }],
+  if (studentProfile.parentId) {
+    const parentProfile = await getUserProfile(studentProfile.parentId);
+    if (parentProfile?.email) {
+      recipients.push({
+        email: parentProfile.email,
+        name: normalizeName(parentProfile),
+        relation: 'parent',
       });
-    },
-  });
+    }
+  }
+
+  const studentName = normalizeName(studentProfile);
+
+  const jobs = recipients.map((recipient) =>
+    withEmailDedupe({
+      key: `submission_peer_complete:${assignmentId}:${studentId}:${recipient.email}`,
+      eventType: 'submission_peer_mark_complete',
+      metadata: { studentId, assignmentId, relation: recipient.relation },
+      action: async () => {
+        const template = buildSubmissionPeerMarkTemplate({
+          recipientName: recipient.name,
+          assignmentTitle,
+          appUrl: getAppUrl(),
+          studentName,
+          relation: recipient.relation,
+        });
+
+        return sendEmail({
+          to: recipient.email,
+          ...template,
+          tags: [{ name: 'event', value: 'submission_peer_mark_complete' }, { name: 'relation', value: recipient.relation }],
+        });
+      },
+    }),
+  );
+
+  return Promise.allSettled(jobs);
 };
 
 export const sendAutoBillingFailedEmail = async ({ studentId, reference, reason = 'charge_failed' }) => {
@@ -187,6 +213,74 @@ export const sendAutoBillingFailedEmail = async ({ studentId, reference, reason 
           to: recipient.email,
           ...template,
           tags: [{ name: 'event', value: 'auto_billing_failed' }],
+        });
+      },
+    }),
+  );
+
+  return Promise.allSettled(jobs);
+};
+
+
+export const sendAssessmentOutcomeEmail = async ({
+  assessmentId,
+  studentId,
+  percentage,
+  score,
+  totalQuestions,
+  recommendedSessions,
+  assessmentDate,
+  questionResults = [],
+}) => {
+  const studentProfile = await getUserProfile(studentId);
+
+  if (!studentProfile?.email) {
+    logger.warn('Assessment email skipped: missing student email', { studentId, assessmentId });
+    return { skipped: true, reason: 'missing_student_email' };
+  }
+
+  const recipients = [{
+    email: studentProfile.email,
+    name: normalizeName(studentProfile),
+    relation: 'student',
+  }];
+
+  if (studentProfile.parentId) {
+    const parentProfile = await getUserProfile(studentProfile.parentId);
+    if (parentProfile?.email) {
+      recipients.push({
+        email: parentProfile.email,
+        name: normalizeName(parentProfile),
+        relation: 'parent',
+      });
+    }
+  }
+
+  const studentName = normalizeName(studentProfile);
+
+  const jobs = recipients.map((recipient) =>
+    withEmailDedupe({
+      key: `assessment_outcome:${assessmentId}:${recipient.email}`,
+      eventType: 'assessment_outcome',
+      metadata: { assessmentId, studentId, relation: recipient.relation },
+      action: async () => {
+        const template = buildAssessmentOutcomeTemplate({
+          recipientName: recipient.name,
+          studentName,
+          relation: recipient.relation,
+          percentage,
+          score,
+          totalQuestions,
+          recommendedSessions,
+          assessmentDate,
+          questionResults,
+          appUrl: getAppUrl(),
+        });
+
+        return sendEmail({
+          to: recipient.email,
+          ...template,
+          tags: [{ name: 'event', value: 'assessment_outcome' }, { name: 'relation', value: recipient.relation }],
         });
       },
     }),

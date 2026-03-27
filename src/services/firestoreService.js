@@ -1277,3 +1277,190 @@ export const updateStudentProfileByParent = async ({ parentId, studentId, update
   await updateDoc(studentRef, payload);
   return { success: true, studentId, ...payload };
 };
+
+export const getTutorStudentById = async ({ tutorId, studentId }) => {
+  if (!studentId) return null;
+
+  if (!isFirebaseConfigured) {
+    const student = demoUsers.find((user) => user.uid === studentId && user.role === 'student');
+    if (!student) return null;
+    if (tutorId && student.tutorId !== tutorId) {
+      throw new Error('This student is not assigned to the current tutor.');
+    }
+    return student;
+  }
+
+  ensureDb();
+  const snapshot = await getDoc(doc(db, collections.users, studentId));
+  if (!snapshot.exists()) return null;
+  const student = snapshot.data();
+  if (student.role !== 'student') return null;
+  if (tutorId && student.tutorId !== tutorId) {
+    throw new Error('This student is not assigned to the current tutor.');
+  }
+  return student;
+};
+
+export const createScheduledLesson = async ({ studentId, tutorId, topic, date, time, link, studentName }) => {
+  const payload = {
+    studentId,
+    tutorId,
+    topic,
+    date,
+    time,
+    link: link || '',
+    studentName: studentName || 'Student',
+    status: 'scheduled',
+    lessonCompleted: false,
+    topicReport: '',
+    understandingLevel: null,
+    completedAt: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (!isFirebaseConfigured) {
+    return { id: `mock-scheduled-${Date.now()}`, ...payload };
+  }
+
+  ensureDb();
+  const ref = await addDoc(collection(db, collections.scheduledLessons), {
+    ...payload,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  return { id: ref.id, ...payload };
+};
+
+export const updateScheduledLesson = async ({ lessonId, updates }) => {
+  if (!lessonId) throw new Error('lessonId is required.');
+
+  if (!isFirebaseConfigured) {
+    return { id: lessonId, ...updates };
+  }
+
+  ensureDb();
+  const lessonRef = doc(db, collections.scheduledLessons, lessonId);
+  await updateDoc(lessonRef, {
+    ...updates,
+    updatedAt: serverTimestamp(),
+  });
+
+  const snapshot = await getDoc(lessonRef);
+  return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : { id: lessonId, ...updates };
+};
+
+export const getScheduledLessonsForStudent = async (studentId) => {
+  if (!studentId) return [];
+
+  if (!isFirebaseConfigured) {
+    return [];
+  }
+
+  ensureDb();
+  const q = query(
+    collection(db, collections.scheduledLessons),
+    where('studentId', '==', studentId),
+    orderBy('date', 'asc'),
+    orderBy('time', 'asc'),
+  );
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+};
+
+export const subscribeToScheduledLessonsForStudent = (studentId, callback) => {
+  if (!studentId) return () => {};
+
+  if (!isFirebaseConfigured) {
+    callback([]);
+    return () => {};
+  }
+
+  const q = query(
+    collection(db, collections.scheduledLessons),
+    where('studentId', '==', studentId),
+    orderBy('date', 'asc'),
+    orderBy('time', 'asc'),
+  );
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      callback(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })));
+    },
+    (error) => console.error('[Examify][Firestore] subscribeToScheduledLessonsForStudent error', error),
+  );
+};
+
+export const saveAssessmentResult = async ({
+  studentId,
+  tutorId,
+  studentName,
+  grade,
+  subject,
+  score,
+  totalQuestions,
+  percentage,
+  recommendedSessions,
+  questionResults,
+  assessmentDate,
+}) => {
+  const payload = {
+    studentId,
+    tutorId,
+    studentName,
+    grade,
+    subject,
+    score,
+    totalQuestions,
+    percentage,
+    recommendedSessions,
+    questionResults,
+    assessmentDate,
+  };
+
+  if (!isFirebaseConfigured) {
+    return { id: `mock-assessment-${Date.now()}`, ...payload };
+  }
+
+  ensureDb();
+
+  await setDoc(
+    doc(db, collections.users, studentId),
+    {
+      assessmentScore: percentage,
+      assessmentDate,
+      recommendedSessions,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+
+  const ref = await addDoc(collection(db, collections.assessments), {
+    ...payload,
+    createdAt: serverTimestamp(),
+  });
+
+  return { id: ref.id, ...payload };
+};
+
+export const getParentStudentById = async ({ parentId, studentId }) => {
+  if (!studentId) return null;
+
+  if (!isFirebaseConfigured) {
+    return demoUsers.find((user) => user.uid === studentId && user.role === 'student') || null;
+  }
+
+  ensureDb();
+  const snapshot = await getDoc(doc(db, collections.users, studentId));
+  if (!snapshot.exists()) return null;
+  const student = snapshot.data();
+
+  if (student.role !== 'student') return null;
+  if (parentId && student.parentId !== parentId) {
+    throw new Error('This student is not linked to the current parent account.');
+  }
+
+  return student;
+};
