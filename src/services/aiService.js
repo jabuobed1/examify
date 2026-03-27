@@ -93,6 +93,131 @@ const normalizeRecommendations = (parsed, payload = {}) => {
   };
 };
 
+const RELIABLE_PAST_PAPER_WEBSITES = [
+  'https://www.education.gov.za',
+  'https://www.wcedeportal.co.za',
+  'https://www.ecexams.co.za',
+  'https://www.furtherstudies.co.za',
+  'https://www.testpapers.co.za',
+];
+
+const buildPastPaperSearchPrompt = ({
+  subject,
+  curriculum,
+  year,
+  grade,
+  province,
+  existingPapers = [],
+  maxResults = 20,
+} = {}) => `
+You are Examify's Mathematics past paper discovery assistant.
+
+Task:
+- Find South African Mathematics past exam papers and memorandums using reliable sources only.
+- Return at most ${maxResults} papers.
+- Exclude any paper that already exists in the provided existing papers list.
+- Only include entries where paperUrl and memoUrl are direct PDF links (must point to actual PDF files).
+- Return strict JSON with a top-level key called "papers".
+
+Reliable source websites (prioritise these):
+${RELIABLE_PAST_PAPER_WEBSITES.map((site) => `- ${site}`).join('\n')}
+
+Tutor search filters:
+- subject: ${subject}
+- curriculum: ${curriculum}
+- year: ${year}
+- grade: ${grade}
+- province: ${province}
+
+Already existing papers in Firestore for these filters:
+${JSON.stringify(existingPapers)}
+
+Output schema (strict JSON only):
+{
+  "papers": [
+    {
+      "subject": "Mathematics",
+      "curriculum": "CAPS",
+      "year": 2025,
+      "grade": "Grade 12",
+      "province": "Gauteng",
+      "region": "Gauteng",
+      "paperUrl": "https://...pdf",
+      "memoUrl": "https://...pdf",
+      "source": "Department of Basic Education",
+      "sourceWebsite": "https://www.education.gov.za",
+      "paperNumber": "P1",
+      "month": "June",
+      "notes": "optional short note"
+    }
+  ]
+}
+
+Mandatory rules:
+- Return only JSON. No markdown, no code fences, no extra text.
+- Use double quotes for keys and strings.
+- curriculum must be exactly "CAPS" or "IEB".
+- paperNumber must be exactly one of "P1", "P2", "P3".
+- month must be one of "March", "June", "September", "December".
+- year must be a number.
+- paperUrl and memoUrl must both contain ".pdf".
+- province and region should match the tutor-selected province unless the source is National.
+- Do not return duplicates in the same response.
+`;
+
+const normalizePastPaperSearchResponse = (parsed, { maxResults = 20, filters = {} } = {}) => {
+  const rows = Array.isArray(parsed?.papers) ? parsed.papers : [];
+  const curriculums = new Set(['CAPS', 'IEB']);
+  const paperNumbers = new Set(['P1', 'P2', 'P3']);
+  const months = new Set(['March', 'June', 'September', 'December']);
+  const unique = new Set();
+
+  return rows
+    .map((item) => ({
+      subject: String(item?.subject || filters.subject || 'Mathematics').trim(),
+      curriculum: String(item?.curriculum || filters.curriculum || '').trim().toUpperCase(),
+      year: Number(item?.year || filters.year),
+      grade: String(item?.grade || filters.grade || '').trim(),
+      province: String(item?.province || filters.province || '').trim(),
+      region: String(item?.region || item?.province || filters.province || '').trim(),
+      paperUrl: String(item?.paperUrl || '').trim(),
+      memoUrl: String(item?.memoUrl || '').trim(),
+      source: String(item?.source || '').trim(),
+      sourceWebsite: String(item?.sourceWebsite || '').trim(),
+      paperNumber: String(item?.paperNumber || '').trim().toUpperCase(),
+      month: String(item?.month || '').trim(),
+      notes: String(item?.notes || '').trim(),
+    }))
+    .filter((item) =>
+      item.subject
+      && curriculums.has(item.curriculum)
+      && Number.isFinite(item.year)
+      && item.grade
+      && item.province
+      && item.paperUrl.toLowerCase().includes('.pdf')
+      && item.memoUrl.toLowerCase().includes('.pdf')
+      && item.source
+      && item.sourceWebsite
+      && paperNumbers.has(item.paperNumber)
+      && months.has(item.month))
+    .filter((item) => {
+      const dedupeKey = [
+        item.subject.toLowerCase(),
+        item.curriculum,
+        item.year,
+        item.grade.toLowerCase(),
+        item.province.toLowerCase(),
+        item.paperNumber,
+        item.month.toLowerCase(),
+        item.paperUrl.toLowerCase(),
+      ].join('|');
+      if (unique.has(dedupeKey)) return false;
+      unique.add(dedupeKey);
+      return true;
+    })
+    .slice(0, maxResults);
+};
+
 const buildPrompt = ({
   grade,
   region,
@@ -217,4 +342,45 @@ export const recommendExercises = async (payload = {}) => {
     console.error('[Examify][AI] recommendExercises:error', error);
     return getFallbackRecommendations(payload);
   }
+};
+
+export const searchPastPapersWithAi = async ({
+  subject,
+  curriculum,
+  year,
+  grade,
+  province,
+  existingPapers = [],
+  maxResults = 20,
+} = {}) => {
+  if (!isFirebaseConfigured || !ai) {
+    return { papers: [] };
+  }
+
+  const model = getGenerativeModel(ai, {
+    model: firebaseAiModel,
+  });
+
+  const result = await model.generateContent(buildPastPaperSearchPrompt({
+    subject,
+    curriculum,
+    year,
+    grade,
+    province,
+    existingPapers,
+    maxResults,
+  }));
+
+  const rawText = result?.response?.text?.() ?? '';
+  const strippedText = stripCodeFence(rawText);
+  const jsonText = extractJsonObject(strippedText);
+  const parsed = JSON.parse(jsonText);
+
+  return {
+    papers: normalizePastPaperSearchResponse(parsed, {
+      maxResults,
+      filters: { subject, curriculum, year, grade, province },
+    }),
+    source: 'firebase-ai-logic',
+  };
 };

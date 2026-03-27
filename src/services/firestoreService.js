@@ -1,6 +1,7 @@
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -16,7 +17,7 @@ import {
 import { addDays, formatISO } from 'date-fns';
 import { db, isFirebaseConfigured } from '../firebase/config';
 import { collections } from '../firebase/schema';
-import { recommendExercises } from './aiService';
+import { recommendExercises, searchPastPapersWithAi } from './aiService';
 import {
   mockCompletedLessons,
   mockDashboardData,
@@ -25,7 +26,7 @@ import {
   mockUsers,
   mockGuideQuizResults,
 } from '../data/mockData';
-import { MAX_AI_SOURCE_PAPERS, MAX_DAILY_EXERCISES, SUBJECT, WEEKLY_EXERCISE_DAYS } from '../lib/constants';
+import { CURRICULUMS, MAX_AI_SOURCE_PAPERS, MAX_DAILY_EXERCISES, PAPER_MONTHS, PAPER_NUMBERS, SUBJECT, WEEKLY_EXERCISE_DAYS } from '../lib/constants';
 
 const emptyDashboardData = {
   student: {
@@ -806,40 +807,268 @@ export const getQuestionPapersByIds = async (ids) => {
   return snapshots.filter((snap) => snap.exists()).map((snap) => ({ id: snap.id, ...snap.data() }));
 };
 
+const normalizePaperForStorage = (paper = {}, fallback = {}) => {
+  const month = String(paper.month || fallback.month || '').trim();
+  const curriculum = String(paper.curriculum || fallback.curriculum || '').trim().toUpperCase();
+  const paperNumber = String(paper.paperNumber || fallback.paperNumber || '').trim().toUpperCase();
+  const year = Number(paper.year ?? fallback.year);
+
+  return {
+    subject: String(paper.subject || fallback.subject || SUBJECT).trim(),
+    curriculum: CURRICULUMS.includes(curriculum) ? curriculum : fallback.curriculum || 'CAPS',
+    year: Number.isFinite(year) ? year : Number(new Date().getFullYear()),
+    grade: String(paper.grade || fallback.grade || '').trim(),
+    province: String(paper.province || fallback.province || paper.region || '').trim(),
+    region: String(paper.region || paper.province || fallback.province || fallback.region || '').trim(),
+    paperUrl: String(paper.paperUrl || '').trim(),
+    memoUrl: String(paper.memoUrl || '').trim(),
+    source: String(paper.source || '').trim(),
+    sourceWebsite: String(paper.sourceWebsite || '').trim(),
+    paperNumber: PAPER_NUMBERS.includes(paperNumber) ? paperNumber : (fallback.paperNumber || 'P1'),
+    month: PAPER_MONTHS.includes(month) ? month : (fallback.month || 'June'),
+    notes: String(paper.notes || '').trim(),
+    paperFileName: String(paper.paperFileName || '').trim(),
+    memoFileName: String(paper.memoFileName || '').trim(),
+    createdBy: paper.createdBy || fallback.createdBy || 'unknown',
+  };
+};
+
+const buildQuestionPaperIdentityKey = (paper = {}) => [
+  String(paper.subject || '').toLowerCase(),
+  String(paper.curriculum || '').toUpperCase(),
+  Number(paper.year || 0),
+  String(paper.grade || '').toLowerCase(),
+  String(paper.province || paper.region || '').toLowerCase(),
+  String(paper.paperNumber || '').toUpperCase(),
+  String(paper.month || '').toLowerCase(),
+].join('|');
+
+const isDuplicateQuestionPaper = (existing = {}, candidate = {}) =>
+  buildQuestionPaperIdentityKey(existing) === buildQuestionPaperIdentityKey(candidate);
+
 export const saveQuestionPaper = async (paper) => {
+  const normalizedPaper = normalizePaperForStorage(paper, {
+    subject: SUBJECT,
+    curriculum: 'CAPS',
+    grade: paper.grade,
+    province: paper.province || paper.region,
+    region: paper.region || paper.province,
+    month: paper.month,
+    paperNumber: paper.paperNumber,
+    createdBy: paper.createdBy,
+  });
+
   const existsInDemo = mockQuestionPapers.some((item) =>
-    item.region === paper.region && item.subject === paper.subject && item.year === Number(paper.year) && item.month === paper.month,
+    isDuplicateQuestionPaper(normalizePaperForStorage(item, normalizedPaper), normalizedPaper),
   );
 
   if (!isFirebaseConfigured) {
     if (existsInDemo) {
-      throw new Error('This past exam paper already exists for the same region, subject, year, and month.');
+      throw new Error('This past exam paper already exists for the same subject, curriculum, year, grade, province, paper number, and month.');
     }
-    return { id: `mock-paper-${Date.now()}`, ...paper };
+    return { id: `mock-paper-${Date.now()}`, ...normalizedPaper };
   }
 
   ensureDb();
-  const duplicateSnapshot = await getDocs(
+  const scopedSnapshot = await getDocs(
     query(
       collection(db, collections.questionPapers),
-      where('region', '==', paper.region),
-      where('subject', '==', paper.subject),
-      where('year', '==', Number(paper.year)),
-      where('month', '==', paper.month),
-      limit(1),
+      where('subject', '==', normalizedPaper.subject),
+      where('year', '==', Number(normalizedPaper.year)),
+      limit(100),
     ),
   );
+  const duplicateExists = scopedSnapshot.docs
+    .map((item) => normalizePaperForStorage(item.data(), normalizedPaper))
+    .some((item) => isDuplicateQuestionPaper(item, normalizedPaper));
 
-  if (!duplicateSnapshot.empty) {
-    throw new Error('This past exam paper already exists for the same region, subject, year, and month.');
+  if (duplicateExists) {
+    throw new Error('This past exam paper already exists for the same subject, curriculum, year, grade, province, paper number, and month.');
   }
 
   const ref = await addDoc(collection(db, collections.questionPapers), {
-    ...paper,
-    year: Number(paper.year),
+    ...normalizedPaper,
     createdAt: serverTimestamp(),
   });
-  return { id: ref.id, ...paper };
+  return { id: ref.id, ...normalizedPaper };
+};
+
+const buildPastPaperSearchDraftId = ({ tutorId, subject, curriculum, year, grade, province }) =>
+  [
+    tutorId,
+    String(subject || '').toLowerCase().replace(/\s+/g, '-'),
+    String(curriculum || '').toLowerCase(),
+    String(year || '').trim(),
+    String(grade || '').toLowerCase().replace(/\s+/g, '-'),
+    String(province || '').toLowerCase().replace(/\s+/g, '-'),
+  ].join('__');
+
+export const getExistingQuestionPapersForSearch = async ({
+  subject = SUBJECT,
+  curriculum,
+  year,
+  grade,
+  province,
+}) => {
+  const matches = (items = []) => items
+    .map((item) => normalizePaperForStorage(item, { subject, curriculum, year, grade, province, region: province }))
+    .filter((item) =>
+      item.subject === subject
+      && item.curriculum === curriculum
+      && item.year === Number(year)
+      && item.grade === grade
+      && (item.province === province || item.region === province));
+
+  if (!isFirebaseConfigured) {
+    return matches(mockQuestionPapers);
+  }
+
+  ensureDb();
+  const snapshot = await getDocs(
+    query(
+      collection(db, collections.questionPapers),
+      where('subject', '==', subject),
+      where('year', '==', Number(year)),
+    ),
+  );
+
+  return matches(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })));
+};
+
+export const getPastPaperSearchDraft = async ({ tutorId, subject, curriculum, year, grade, province }) => {
+  if (!tutorId) return null;
+
+  const draftId = buildPastPaperSearchDraftId({ tutorId, subject, curriculum, year, grade, province });
+  if (!isFirebaseConfigured) return null;
+
+  ensureDb();
+  const snapshot = await getDoc(doc(db, collections.pastPaperSearchDrafts, draftId));
+  return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
+};
+
+export const runPastPaperAiSearch = async ({
+  tutorId,
+  filters,
+}) => {
+  const existingPapers = await getExistingQuestionPapersForSearch(filters);
+  const aiResult = await searchPastPapersWithAi({
+    ...filters,
+    existingPapers: existingPapers.map((paper) => ({
+      subject: paper.subject,
+      curriculum: paper.curriculum,
+      year: paper.year,
+      grade: paper.grade,
+      province: paper.province || paper.region,
+      paperNumber: paper.paperNumber,
+      month: paper.month,
+      paperUrl: paper.paperUrl,
+      memoUrl: paper.memoUrl,
+      sourceWebsite: paper.sourceWebsite,
+    })),
+    maxResults: 20,
+  });
+
+  const papers = aiResult.papers.map((paper) => normalizePaperForStorage(paper, {
+    ...filters,
+    region: filters.province,
+    createdBy: tutorId,
+  }));
+
+  const draft = {
+    tutorId,
+    ...filters,
+    status: 'pending',
+    generatedAt: new Date().toISOString(),
+    existingPapersCount: existingPapers.length,
+    results: papers,
+  };
+
+  if (!isFirebaseConfigured) {
+    return { id: `draft-${Date.now()}`, ...draft };
+  }
+
+  ensureDb();
+  const draftId = buildPastPaperSearchDraftId({ tutorId, ...filters });
+  await setDoc(doc(db, collections.pastPaperSearchDrafts, draftId), {
+    ...draft,
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+
+  return { id: draftId, ...draft };
+};
+
+export const updatePastPaperSearchDraftResults = async ({
+  draftId,
+  results,
+}) => {
+  if (!draftId) return null;
+  if (!isFirebaseConfigured) return { id: draftId, results };
+
+  ensureDb();
+  await updateDoc(doc(db, collections.pastPaperSearchDrafts, draftId), {
+    results,
+    updatedAt: serverTimestamp(),
+  });
+  return { id: draftId, results };
+};
+
+export const discardPastPaperFromDraft = async ({ draftId, paperKey }) => {
+  if (!draftId || !paperKey) return null;
+  if (!isFirebaseConfigured) return { id: draftId, results: [] };
+  ensureDb();
+  const draft = await getDoc(doc(db, collections.pastPaperSearchDrafts, draftId));
+  if (!draft.exists()) return null;
+  const data = draft.data();
+  const nextResults = Array.isArray(data.results)
+    ? data.results.filter((item) => buildQuestionPaperIdentityKey(item) !== paperKey)
+    : [];
+  return updatePastPaperSearchDraftResults({ draftId, results: nextResults });
+};
+
+export const saveDraftPapersToOfficialCollection = async ({ draftId, tutorId }) => {
+  if (!draftId) return { saved: [], skipped: [] };
+
+  if (!isFirebaseConfigured) {
+    return { saved: [], skipped: [] };
+  }
+
+  ensureDb();
+  const draftRef = doc(db, collections.pastPaperSearchDrafts, draftId);
+  const draftSnap = await getDoc(draftRef);
+  if (!draftSnap.exists()) {
+    throw new Error('Draft not found.');
+  }
+
+  const draft = draftSnap.data();
+  const results = Array.isArray(draft.results) ? draft.results : [];
+  const saved = [];
+  const skipped = [];
+
+  for (const item of results) {
+    try {
+      const savedItem = await saveQuestionPaper({
+        ...item,
+        createdBy: item.createdBy || tutorId || draft.tutorId || 'unknown',
+      });
+      saved.push(savedItem);
+    } catch (error) {
+      skipped.push({ item, reason: error.message });
+    }
+  }
+
+  await updateDoc(draftRef, {
+    status: 'saved',
+    savedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  return { saved, skipped };
+};
+
+export const deletePastPaperSearchDraft = async ({ draftId }) => {
+  if (!draftId || !isFirebaseConfigured) return;
+  ensureDb();
+  await deleteDoc(doc(db, collections.pastPaperSearchDrafts, draftId));
 };
 
 export const savePeerReview = async (payload) => {
