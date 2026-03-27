@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AppShell } from '../../components/common/AppShell';
+import { AssessmentSummaryCard } from '../../components/assessment/AssessmentResultPanel';
 import { SectionHeader } from '../../components/common/SectionHeader';
 import { StatCard } from '../../components/common/StatCard';
 import { ExerciseCard } from '../../components/dashboard/ExerciseCard';
 import { useAuth } from '../../hooks/useAuth';
 import { canOpenExercise, getExerciseAvailability } from '../../utils/exerciseRules';
 import {
-  generateExercisePlanIfEligible,
-  getCurrentWeekExercises,
+    generateExercisePlanIfEligible,
+    getLatestAssessmentForStudent,
+    getCurrentWeekExercises,
   getExerciseHistory,
   getFutureExercises,
   getRoleDashboardData,
@@ -31,6 +33,7 @@ export const StudentDashboardPage = () => {
   const [loadError, setLoadError] = useState('');
   const [accessState, setAccessState] = useState(null);
   const [tutorProfile, setTutorProfile] = useState(null);
+  const [latestAssessment, setLatestAssessment] = useState(null);
   const [isInitialLoading, setIsInitialLoading] = useState(!cached?.dashboard);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
@@ -86,13 +89,14 @@ export const StudentDashboardPage = () => {
       setStatusMessage('Refreshing dashboard...');
     }
     try {
-      const [data, exerciseHistory, currentWeekExercises, futureExs, studentAccess, liveTodayExercise] = await Promise.all([
+      const [data, exerciseHistory, currentWeekExercises, futureExs, studentAccess, liveTodayExercise, assessment] = await Promise.all([
         getRoleDashboardData('student', { studentId: profile?.uid }),
         getExerciseHistory(profile?.uid),
         getCurrentWeekExercises(profile?.uid),
         getFutureExercises(profile?.uid),
         getStudentAccessState(profile),
         getTodayExercise(profile?.uid),
+        getLatestAssessmentForStudent(profile?.uid),
       ]);
 
       const todaySubmitted = Boolean(liveTodayExercise?.submittedImageUrl || liveTodayExercise?.submittedFileName);
@@ -108,6 +112,7 @@ export const StudentDashboardPage = () => {
       setCurrentWeek(currentWeekExercises);
       setFutureExercises(futureExs);
       setAccessState(studentAccess);
+      setLatestAssessment(assessment);
       setLoadError('');
       dashboardCacheByStudent.set(profile.uid, { dashboard: mergedDashboard, updatedAt: Date.now() });
       if (showStatus) setStatusMessage('Dashboard updated.');
@@ -257,6 +262,12 @@ export const StudentDashboardPage = () => {
           <p className="mt-2 text-xs text-slate-500">{Math.min(100, Math.max(0, generationProgress))}%</p>
         </div>
       ) : null}
+
+      <AssessmentSummaryCard
+        assessment={latestAssessment}
+        title="Latest assessment outcome"
+        detailUrl={latestAssessment?.id ? `/student/assessment/${latestAssessment.id}` : null}
+      />
       
       <section className="flex">
         {!paymentLocked && todayExercise && availability ? (

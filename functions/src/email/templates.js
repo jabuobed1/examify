@@ -208,7 +208,19 @@ export const buildSubmissionPeerMarkTemplate = ({ recipientName, assignmentTitle
 };
 
 
-export const buildAssessmentOutcomeTemplate = ({ recipientName, studentName, relation = 'student', percentage, score, totalQuestions, recommendedSessions, assessmentDate, questionResults = [], appUrl }) => {
+export const buildAssessmentOutcomeTemplate = ({
+  recipientName,
+  studentName,
+  relation = 'student',
+  percentage,
+  score,
+  totalQuestions,
+  recommendedSessions,
+  assessmentDate,
+  questionResults = [],
+  appUrl,
+  resultsUrl = null,
+}) => {
   const subject = 'Assessment outcome available — Examify Maths';
 
   const questionListHtml = questionResults.slice(0, 15).map((item, index) => {
@@ -221,22 +233,22 @@ export const buildAssessmentOutcomeTemplate = ({ recipientName, studentName, rel
     title: 'Assessment Outcome Ready',
     greeting: `Hi ${recipientName || 'there'},`,
     body: createBodyParagraphs([
-      relation === 'parent'
-        ? `Here is the latest assessment result for ${studentName || 'your student'}.`
-        : 'Here is your latest assessment result.',
+      relation === 'student'
+        ? 'Here is your latest assessment result.'
+        : `Here is the latest assessment result for ${studentName || 'your student'}.`,
       `Score: ${score}/${totalQuestions} (${percentage}%).`,
       `Recommended sessions: ${recommendedSessions}.`,
       `Assessment date: ${assessmentDate}.`,
     ]) + `<div style="margin-top:14px;"><p style="font-size:14px;font-weight:700;color:${brandColors.textPrimary};margin-bottom:8px;">Questions and answers</p><ol style="padding-left:18px;margin:0;font-size:13px;color:${brandColors.textMuted};">${questionListHtml}</ol></div>`,
     highlight: 'Use this outcome to plan the next lessons and focus areas.',
-    ctaLabel: appUrl ? 'Open Examify' : null,
-    ctaUrl: appUrl || null,
+    ctaLabel: (resultsUrl || appUrl) ? 'See Results in Examify' : null,
+    ctaUrl: resultsUrl || appUrl || null,
   });
 
   const textLines = [
     `Hi ${recipientName || 'there'},`,
     '',
-    relation === 'parent' ? `Assessment outcome for ${studentName || 'your student'}:` : 'Your assessment outcome:',
+    relation === 'student' ? 'Your assessment outcome:' : `Assessment outcome for ${studentName || 'your student'}:`,
     `Score: ${score}/${totalQuestions} (${percentage}%)`,
     `Recommended sessions: ${recommendedSessions}`,
     `Assessment date: ${assessmentDate}`,
@@ -246,7 +258,7 @@ export const buildAssessmentOutcomeTemplate = ({ recipientName, studentName, rel
       const isCorrect = item?.selectedOptionId && item?.selectedOptionId === item?.correctOptionId;
       return `Q${index + 1}: ${item?.prompt || 'Question'} | Selected: ${item?.selectedOptionText || 'No answer'} | Correct: ${item?.correctOptionText || 'N/A'} | ${isCorrect ? 'Correct' : 'Incorrect'}`;
     }),
-    appUrl ? `Open Examify: ${appUrl}` : null,
+    resultsUrl || appUrl ? `See Results in Examify: ${resultsUrl || appUrl}` : null,
     '',
     '— Examify Team',
   ].filter(Boolean);

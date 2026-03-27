@@ -291,6 +291,9 @@ Question-plan rules: ${JSON.stringify(questionPlanRules)}
 Maximum question references per day: ${maxQuestionsPerDay}
 
 Additional mandatory generation rules:
+- ABSOLUTE CONSTRAINT: Use ONLY topics that appear in Completed topics. Never invent, infer, reword, or broaden a topic outside that exact list.
+- If a topic is not in Completed topics EXACTLY, you must not use it in topic, topicBreakdown, title, reason, sourceLabel, instruction, or questionReferences.
+- If no valid completed topic can be used, return an empty recommendations array.
 - The title must be only the question reference numbers joined by " | " when there are multiple references.
 - Never use topic names in the title.
 - Return exactly one recommendation object per assignment date.

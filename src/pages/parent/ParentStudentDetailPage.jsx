@@ -2,8 +2,14 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { AppShell } from '../../components/common/AppShell';
 import { SectionHeader } from '../../components/common/SectionHeader';
+import { AssessmentSummaryCard } from '../../components/assessment/AssessmentResultPanel';
 import { useAuth } from '../../hooks/useAuth';
-import { getParentStudentById, subscribeToScheduledLessonsForStudent, subscribeToUserProfile } from '../../services/firestoreService';
+import {
+  getLatestAssessmentForStudent,
+  getParentStudentById,
+  subscribeToScheduledLessonsForStudent,
+  subscribeToUserProfile,
+} from '../../services/firestoreService';
 
 export const ParentStudentDetailPage = () => {
   const { studentId } = useParams();
@@ -11,6 +17,7 @@ export const ParentStudentDetailPage = () => {
 
   const [student, setStudent] = useState(null);
   const [lessons, setLessons] = useState([]);
+  const [latestAssessment, setLatestAssessment] = useState(null);
   const [status, setStatus] = useState('');
 
   useEffect(() => {
@@ -23,6 +30,8 @@ export const ParentStudentDetailPage = () => {
           setStatus('Student not found.');
         } else {
           setStudent(result);
+          const assessment = await getLatestAssessmentForStudent(studentId);
+          setLatestAssessment(assessment);
         }
       } catch (error) {
         setStatus(error.message || 'Unable to load student details.');
@@ -64,6 +73,12 @@ export const ParentStudentDetailPage = () => {
               <p className="text-sm text-slate-600">Assessment date: <strong>{student.assessmentDate || 'N/A'}</strong></p>
             </div>
           </section>
+
+          <AssessmentSummaryCard
+            assessment={latestAssessment}
+            title="Latest assessment outcome"
+            detailUrl={latestAssessment?.id ? `/parent/student/${studentId}/assessment/${latestAssessment.id}` : null}
+          />
 
           <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
             <div className="panel p-6">

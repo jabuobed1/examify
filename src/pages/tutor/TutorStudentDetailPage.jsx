@@ -2,13 +2,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { doc, setDoc } from 'firebase/firestore';
 import { AppShell } from '../../components/common/AppShell';
+import { AssessmentSummaryCard } from '../../components/assessment/AssessmentResultPanel';
 import { SectionHeader } from '../../components/common/SectionHeader';
 import { useAuth } from '../../hooks/useAuth';
 import { db } from '../../firebase/config';
 import {
-  createScheduledLesson,
-  generateExercisePlanIfEligible,
-  getQuestionPapers,
+    createScheduledLesson,
+    generateExercisePlanIfEligible,
+    getLatestAssessmentForStudent,
+    getQuestionPapers,
   getTutorStudentById,
   saveAssessmentResult,
   saveCompletedLesson,
@@ -43,6 +45,7 @@ export const TutorStudentDetailPage = () => {
   const navigate = useNavigate();
 
   const [student, setStudent] = useState(null);
+  const [latestAssessment, setLatestAssessment] = useState(null);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -69,6 +72,8 @@ export const TutorStudentDetailPage = () => {
           setStudent(null);
         } else {
           setStudent(studentProfile);
+          const assessment = await getLatestAssessmentForStudent(studentId);
+          setLatestAssessment(assessment);
           setStatus('');
         }
       } catch (error) {
@@ -248,7 +253,7 @@ export const TutorStudentDetailPage = () => {
       const recommendedSessions = getRecommendedSessionsFromAssessment(percentage);
       const assessmentDate = new Date().toISOString().slice(0, 10);
 
-      await saveAssessmentResult({
+      const savedAssessment = await saveAssessmentResult({
         studentId,
         tutorId: profile?.uid,
         studentName: student?.displayName || student?.name || 'Student',
@@ -262,6 +267,7 @@ export const TutorStudentDetailPage = () => {
         assessmentDate,
       });
 
+      setLatestAssessment(savedAssessment);
       setStatus(`Assessment submitted. Score: ${percentage}%. Recommended sessions: ${recommendedSessions}.`);
     } catch (error) {
       setStatus(error.message || 'Failed to submit assessment.');
@@ -392,6 +398,12 @@ export const TutorStudentDetailPage = () => {
           )}
         </div>
       </section>
+
+      <AssessmentSummaryCard
+        assessment={latestAssessment}
+        title="Latest assessment outcome"
+        detailUrl={latestAssessment?.id ? `/tutor/student/${studentId}/assessment/${latestAssessment.id}` : null}
+      />
 
       {hasInitialReport ? (
         <section className="panel p-6">

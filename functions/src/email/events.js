@@ -20,6 +20,16 @@ const normalizeName = (profile) => profile?.displayName || profile?.name || prof
 
 const getAppUrl = () => getResendConfig().resendAppUrl || null;
 
+const buildAssessmentResultsUrl = ({ relation, appUrl, assessmentId, studentId }) => {
+  if (!appUrl || !assessmentId) return appUrl;
+  const baseUrl = appUrl.endsWith('/') ? appUrl.slice(0, -1) : appUrl;
+
+  if (relation === 'student') return `${baseUrl}/student/assessment/${assessmentId}`;
+  if (relation === 'tutor' && studentId) return `${baseUrl}/tutor/student/${studentId}/assessment/${assessmentId}`;
+  if (relation === 'parent' && studentId) return `${baseUrl}/parent/student/${studentId}/assessment/${assessmentId}`;
+  return baseUrl;
+};
+
 export const sendWelcomeEmail = async ({ userId, email, role, displayName }) =>
   withEmailDedupe({
     key: `welcome:user:${userId}`,
@@ -231,6 +241,7 @@ export const sendAssessmentOutcomeEmail = async ({
   recommendedSessions,
   assessmentDate,
   questionResults = [],
+  recipientRelations = null,
 }) => {
   const studentProfile = await getUserProfile(studentId);
 
@@ -245,6 +256,17 @@ export const sendAssessmentOutcomeEmail = async ({
     relation: 'student',
   }];
 
+  if (studentProfile.tutorId) {
+    const tutorProfile = await getUserProfile(studentProfile.tutorId);
+    if (tutorProfile?.email) {
+      recipients.push({
+        email: tutorProfile.email,
+        name: normalizeName(tutorProfile),
+        relation: 'tutor',
+      });
+    }
+  }
+
   if (studentProfile.parentId) {
     const parentProfile = await getUserProfile(studentProfile.parentId);
     if (parentProfile?.email) {
@@ -256,9 +278,33 @@ export const sendAssessmentOutcomeEmail = async ({
     }
   }
 
-  const studentName = normalizeName(studentProfile);
+  const relationFilter = Array.isArray(recipientRelations) && recipientRelations.length
+    ? new Set(recipientRelations.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean))
+    : null;
 
-  const jobs = recipients.map((recipient) =>
+  const uniqueRecipients = [];
+  const seenEmails = new Set();
+  recipients.forEach((recipient) => {
+    const email = String(recipient?.email || '').trim().toLowerCase();
+    if (!email || seenEmails.has(email)) return;
+    if (relationFilter && !relationFilter.has(String(recipient.relation || '').toLowerCase())) return;
+    seenEmails.add(email);
+    uniqueRecipients.push(recipient);
+  });
+
+  if (!uniqueRecipients.length) {
+    logger.info('Assessment email skipped: no matching recipients after filtering', {
+      assessmentId,
+      studentId,
+      recipientRelations,
+    });
+    return { skipped: true, reason: 'no_matching_recipients' };
+  }
+
+  const studentName = normalizeName(studentProfile);
+  const appUrl = getAppUrl();
+
+  const jobs = uniqueRecipients.map((recipient) =>
     withEmailDedupe({
       key: `assessment_outcome:${assessmentId}:${recipient.email}`,
       eventType: 'assessment_outcome',
@@ -274,7 +320,13 @@ export const sendAssessmentOutcomeEmail = async ({
           recommendedSessions,
           assessmentDate,
           questionResults,
-          appUrl: getAppUrl(),
+          appUrl,
+          resultsUrl: buildAssessmentResultsUrl({
+            relation: recipient.relation,
+            appUrl,
+            assessmentId,
+            studentId,
+          }),
         });
 
         return sendEmail({

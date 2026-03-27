@@ -20,10 +20,12 @@ const navigationByRole = {
     { to: '/tutor/students', label: 'Students', icon: Users },
     { to: '/tutor/papers', label: 'Past papers', icon: BookOpen },
     { to: '/tutor/reports', label: 'Reports', icon: FileText },
+    { to: '/tutor/profile', label: 'Profile', icon: FileText },
     { to: '/tutor/guide', label: 'Examify Guide', icon: ClipboardCheck },
   ],
   [ROLES.PARENT]: [
     { to: '/parent', label: 'Overview', icon: LayoutDashboard },
+    { to: '/parent/profile', label: 'Profile', icon: FileText },
   ],
   [ROLES.ADMIN]: [
     { to: '/admin', label: 'Overview', icon: LayoutDashboard },
