@@ -231,6 +231,7 @@ export const sendAssessmentOutcomeEmail = async ({
   recommendedSessions,
   assessmentDate,
   questionResults = [],
+  recipientRelations = null,
 }) => {
   const studentProfile = await getUserProfile(studentId);
 
@@ -245,6 +246,17 @@ export const sendAssessmentOutcomeEmail = async ({
     relation: 'student',
   }];
 
+  if (studentProfile.tutorId) {
+    const tutorProfile = await getUserProfile(studentProfile.tutorId);
+    if (tutorProfile?.email) {
+      recipients.push({
+        email: tutorProfile.email,
+        name: normalizeName(tutorProfile),
+        relation: 'tutor',
+      });
+    }
+  }
+
   if (studentProfile.parentId) {
     const parentProfile = await getUserProfile(studentProfile.parentId);
     if (parentProfile?.email) {
@@ -256,9 +268,32 @@ export const sendAssessmentOutcomeEmail = async ({
     }
   }
 
+  const relationFilter = Array.isArray(recipientRelations) && recipientRelations.length
+    ? new Set(recipientRelations.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean))
+    : null;
+
+  const uniqueRecipients = [];
+  const seenEmails = new Set();
+  recipients.forEach((recipient) => {
+    const email = String(recipient?.email || '').trim().toLowerCase();
+    if (!email || seenEmails.has(email)) return;
+    if (relationFilter && !relationFilter.has(String(recipient.relation || '').toLowerCase())) return;
+    seenEmails.add(email);
+    uniqueRecipients.push(recipient);
+  });
+
+  if (!uniqueRecipients.length) {
+    logger.info('Assessment email skipped: no matching recipients after filtering', {
+      assessmentId,
+      studentId,
+      recipientRelations,
+    });
+    return { skipped: true, reason: 'no_matching_recipients' };
+  }
+
   const studentName = normalizeName(studentProfile);
 
-  const jobs = recipients.map((recipient) =>
+  const jobs = uniqueRecipients.map((recipient) =>
     withEmailDedupe({
       key: `assessment_outcome:${assessmentId}:${recipient.email}`,
       eventType: 'assessment_outcome',

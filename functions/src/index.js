@@ -10,4 +10,5 @@ export {
   onUserCreatedSendWelcomeEmail,
   onAssignmentCompletedSendSubmissionPeerMarkEmail,
   onAssessmentCompletedSendOutcomeEmail,
+  onParentLinkedSendLatestAssessmentOutcomeEmail,
 } from './notifications.js';
