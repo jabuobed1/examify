@@ -7,7 +7,7 @@ After editing in Codespaces and Before asking Codex
 
 git status
 git add .
-git commit -m "Commit with full functionality confirmed. 27-03-2026."
+git commit -m "Fixed the indication after student has submitted and also login logic to indicate when login in is happening. 27-03-2026."
 git push origin main
 
 

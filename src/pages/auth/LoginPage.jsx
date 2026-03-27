@@ -26,16 +26,22 @@ const features = [
 export const LoginPage = () => {
   const navigate = useNavigate();
   const { login } = useAuth();
-  const [form, setForm] = useState({ email: 'something@example.com', password: 'password123' });
+  const [form, setForm] = useState({ 
+    email: '', 
+    password: '',
+  });
+  const [loggingIn, setLoggingIn] = useState(false);
   const [status, setStatus] = useState('');
 
   const redirectByRole = (role) => navigate(`/${role}`);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    setLoggingIn(true);
     try {
       const result = await login(form);
       redirectByRole(result.profile.role);
+      setLoggingIn(false);
     } catch (error) {
       setStatus(error.message);
     }
@@ -85,7 +91,13 @@ export const LoginPage = () => {
               </Link>.
             </p>
           </div>
-          <button type="submit" className="btn-primary w-full">Login</button>
+          <button 
+            type="submit" 
+            className="btn-primary w-full"
+            disabled={loggingIn || (form.email === '' && form.password === '')}
+          >
+            {loggingIn ? 'Logging in...' : 'Login'}
+          </button>
           {status ? <p className="text-sm text-rose-600">{status}</p> : null}
           <p className="text-sm text-slate-500">Need an account? <Link to="/signup" className="font-semibold text-brand-700">Create one</Link>.</p>
         </form>

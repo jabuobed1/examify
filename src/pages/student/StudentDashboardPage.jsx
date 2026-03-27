@@ -216,7 +216,7 @@ export const StudentDashboardPage = () => {
 
   if (!dashboard) return null;
 
-  const availability = todayExercise ? getExerciseAvailability(todayExercise.assignmentDate, false) : null;
+  const availability = todayExercise ? getExerciseAvailability(todayExercise.assignmentDate, todayExercise.submitted) : null;
   const paymentLocked = accessState ? !accessState.paymentCompleted : !(profile?.paymentCompleted);
 
   return (

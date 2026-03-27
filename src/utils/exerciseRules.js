@@ -7,7 +7,7 @@ export const getExerciseAvailability = (assignmentDate, hasSubmission) => {
   if (isSameDay(today, target)) {
     return {
       state: 'active',
-      label: hasSubmission ? 'Submitted today ✅' : 'Ready today ⏳',
+      label: hasSubmission ? 'Submitted ✅' : 'For Today ⏳',
     };
   }
 
